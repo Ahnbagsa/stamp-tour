@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>관리자 페이지 - 박람회 스탬프 투어</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
+        import { getFirestore, collection, addDoc, doc, deleteDoc, updateDoc, getDocs, query, orderBy, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyDRS1hoA3dGERshLikDkspfNp5GT10iyF0",
+            authDomain: "stamp-tour-a6ba6.firebaseapp.com",
+            projectId: "stamp-tour-a6ba6",
+            storageBucket: "stamp-tour-a6ba6.firebasestorage.app",
+            messagingSenderId: "646092817201",
+            appId: "1:646092817201:web:1130dd162e6f8e32eaa610"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        // ─────────────────────────────────────
+        // 비밀번호 로그인
+        // ─────────────────────────────────────
+        const ADMIN_PASSWORD = "admin1234"; // ← 원하는 비밀번호로 변경하세요
+
+        window.checkPassword = function() {
+            const pw = document.getElementById('input-password').value;
+            if (pw === ADMIN_PASSWORD) {
+                document.getElementById('screen-login').style.display = 'none';
+                document.getElementById('screen-admin').style.display = 'block';
+                loadAll();
+            } else {
+                document.getElementById('login-error').style.display = 'block';
+            }
+        }
+
+        // Enter 키로 로그인
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('input-password').addEventListener('keydown', e => {
+                if (e.key === 'Enter') window.checkPassword();
+            });
+        });
+
+        // ─────────────────────────────────────
+        // 전체 데이터 로드
+        // ─────────────────────────────────────
+        async function loadAll() {
+            await loadBooths();
+            await loadSurveys();
+            await loadStats();
+        }
+
+        // ─────────────────────────────────────
+        // ① 부스 관리
+        // ─────────────────────────────────────
+        async function loadBooths() {
+            const snapshot = await getDocs(collection(db, 'booths'));
+            const booths = [];
+            snapshot.forEach(d => booths.push({ id: d.id, ...d.data() }));
+
+            // 일반 부스 / 이벤트 부스 분리
+            const normalBooths = booths.filter(b => b.type === 'booth').sort((a,b) => a.code.localeCompare(b.code));
+            const eventBooths  = booths.filter(b => b.type === 'event').sort((a,b) => a.code.localeCompare(b.code));
+
+            renderBoothList('booth-list', normalBooths, 'booth');
+            renderBoothList('event-list', eventBooths, 'event');
+        }
+
+        function renderBoothList(containerId, booths, type) {
+            const container = document.getElementById(containerId);
+            if (booths.length === 0) {
+                container.innerHTML = '<p class="text-gray-400 text-sm text-center py-3">등록된 부스가 없습니다.</p>';
+                return;
+            }
+            container.innerHTML = booths.map(b => `
+                <div class="flex items-center gap-3 bg-gray-50 rounded-lg px-3 py-2 border border-gray-200">
+                    <div class="flex-1">
+                        <span class="text-xs font-mono text-gray-400 mr-2">${b.code}</span>
+                        <span class="font-medium text-gray-800 text-sm">${b.name}</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="text-xs bg-white border border-gray-200 rounded px-2 py-0.5 font-mono text-gray-500 cursor-pointer hover:bg-gray-100"
+                            onclick="copyCode('${b.code}')" title="클릭하면 복사">📋 ${b.code}</span>
+                        <button onclick="deleteBooth('${b.id}', '${b.name}')"
+                            class="text-red-400 hover:text-red-600 text-sm font-bold px-2 py-1 rounded hover:bg-red-50">🗑️</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // 부스 코드 자동 생성 (BOOTH-01, BOOTH-02 ...)
+        async function generateBoothCode(type) {
+            const snapshot = await getDocs(collection(db, 'booths'));
+            const codes = [];
+            snapshot.forEach(d => {
+                const data = d.data();
+                if (data.type === type) codes.push(data.code);
+            });
+            if (type === 'booth') {
+                const nums = codes.map(c => parseInt(c.replace('BOOTH-', ''))).filter(n => !isNaN(n));
+                const next = nums.length > 0 ? Math.max(...nums) + 1 : 1;
+                return `BOOTH-${String(next).padStart(2, '0')}`;
+            } else {
+                // 이벤트는 고정 코드
+                const eventCodes = ['EVENT-BRONZE', 'EVENT-SILVER', 'EVENT-GOLD'];
+                const available = eventCodes.filter(c => !codes.includes(c));
+                return available[0] || null;
+            }
+        }
+
+        window.addBooth = async function() {
+            const name = document.getElementById('input-booth-name').value.trim();
+            if (!name) { alert('부스 이름을 입력해주세요.'); return; }
+
+            const btn = document.getElementById('btn-add-booth');
+            btn.disabled = true; btn.innerText = '추가 중...';
+
+            const code = await generateBoothCode('booth');
+            await addDoc(collection(db, 'booths'), { code, name, type: 'booth' });
+
+            document.getElementById('input-booth-name').value = '';
+            btn.disabled = false; btn.innerText = '+ 부스 추가';
+            await loadBooths();
+            await loadStats();
+        }
+
+        window.addEventBooth = async function() {
+            const name = document.getElementById('input-event-name').value.trim();
+            if (!name) { alert('이벤트 부스 이름을 입력해주세요.'); return; }
+
+            const code = await generateBoothCode('event');
+            if (!code) { alert('이벤트 부스는 최대 3개(동상/은상/금상)까지 등록 가능합니다.'); return; }
+
+            const btn = document.getElementById('btn-add-event');
+            btn.disabled = true; btn.innerText = '추가 중...';
+
+            await addDoc(collection(db, 'booths'), { code, name, type: 'event' });
+
+            document.getElementById('input-event-name').value = '';
+            btn.disabled = false; btn.innerText = '+ 이벤트 부스 추가';
+            await loadBooths();
+        }
+
+        window.deleteBooth = async function(id, name) {
+            if (!confirm(`"${name}" 부스를 삭제하시겠습니까?`)) return;
+            await deleteDoc(doc(db, 'booths', id));
+            await loadBooths();
+            await loadStats();
+        }
+
+        window.copyCode = function(code) {
+            navigator.clipboard.writeText(code).then(() => {
+                alert(`복사됨: ${code}\nQR 코드 생성 시 이 코드를 사용하세요.`);
+            });
+        }
+
+        // ─────────────────────────────────────
+        // ② 설문 문항 관리
+        // ─────────────────────────────────────
+        async function loadSurveys() {
+            const snapshot = await getDocs(collection(db, 'surveys'));
+            let surveys = { pre: null, 'post-bronze': null, 'post-silver': null, 'post-gold': null };
+            snapshot.forEach(d => {
+                const data = d.data();
+                if (surveys.hasOwnProperty(data.type)) {
+                    surveys[data.type] = { id: d.id, ...data };
+                }
+            });
+
+            renderSurveyEditor('pre-survey-editor',    surveys['pre'],         'pre');
+            renderSurveyEditor('bronze-survey-editor', surveys['post-bronze'], 'post-bronze');
+            renderSurveyEditor('silver-survey-editor', surveys['post-silver'], 'post-silver');
+            renderSurveyEditor('gold-survey-editor',   surveys['post-gold'],   'post-gold');
+        }
+
+        function renderSurveyEditor(containerId, survey, type) {
+            const container = document.getElementById(containerId);
+            const questions = survey ? survey.questions : [];
+
+            container.innerHTML = `
+                <div id="${type}-questions" class="flex flex-col gap-3 mb-4">
+                    ${questions.map((q, i) => renderQuestionCard(type, i, q)).join('')}
+                </div>
+                <button onclick="addQuestion('${type}')"
+                    class="w-full border-2 border-dashed border-gray-300 text-gray-500 hover:border-indigo-400 hover:text-indigo-600 rounded-lg py-2 text-sm font-medium">
+                    + 문항 추가
+                </button>
+                <button onclick="saveSurvey('${type}', '${survey ? survey.id : ''}')"
+                    class="w-full mt-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 rounded-lg text-sm">
+                    💾 저장
+                </button>
+            `;
+        }
+
+        function renderQuestionCard(type, index, q) {
+            const optionsHtml = (q.options || []).map((opt, oi) => `
+                <div class="flex items-center gap-2 mt-1">
+                    <input type="text" value="${opt}"
+                        class="flex-1 border border-gray-200 rounded px-2 py-1 text-sm"
+                        id="${type}-q${index}-opt${oi}">
+                    <button onclick="removeOption('${type}', ${index}, ${oi})" class="text-red-400 hover:text-red-600 text-xs">✕</button>
+                </div>
+            `).join('');
+
+            return `
+                <div class="border border-gray-200 rounded-lg p-3 bg-white" id="${type}-question-${index}">
+                    <div class="flex items-center gap-2 mb-2">
+                        <span class="text-xs font-bold text-gray-400">Q${index+1}</span>
+                        <input type="text" value="${q.text || ''}" placeholder="문항 내용 입력"
+                            class="flex-1 border border-gray-200 rounded px-2 py-1 text-sm font-medium"
+                            id="${type}-q${index}-text">
+                        <button onclick="removeQuestion('${type}', ${index})" class="text-red-400 hover:text-red-600 text-xs font-bold">🗑️</button>
+                    </div>
+                    <div id="${type}-q${index}-options">${optionsHtml}</div>
+                    <button onclick="addOption('${type}', ${index})"
+                        class="mt-2 text-xs text-indigo-500 hover:text-indigo-700">+ 보기 추가</button>
+                </div>
+            `;
+        }
+
+        window.addQuestion = function(type) {
+            const container = document.getElementById(`${type}-questions`);
+            const count = container.querySelectorAll('[id^="' + type + '-question-"]').length;
+            const div = document.createElement('div');
+            div.innerHTML = renderQuestionCard(type, count, { text: '', options: [] });
+            container.appendChild(div.firstElementChild);
+        }
+
+        window.removeQuestion = function(type, index) {
+            const el = document.getElementById(`${type}-question-${index}`);
+            if (el) el.remove();
+        }
+
+        window.addOption = function(type, index) {
+            const container = document.getElementById(`${type}-q${index}-options`);
+            const count = container.querySelectorAll('input[type="text"]').length;
+            const div = document.createElement('div');
+            div.className = 'flex items-center gap-2 mt-1';
+            div.innerHTML = `
+                <input type="text" placeholder="보기 입력"
+                    class="flex-1 border border-gray-200 rounded px-2 py-1 text-sm"
+                    id="${type}-q${index}-opt${count}">
+                <button onclick="this.parentElement.remove()" class="text-red-400 hover:text-red-600 text-xs">✕</button>
+            `;
+            container.appendChild(div);
+        }
+
+        window.removeOption = function(type, index, optIndex) {
+            const el = document.getElementById(`${type}-q${index}-opt${optIndex}`);
+            if (el) el.parentElement.remove();
+        }
+
+        window.saveSurvey = async function(type, existingId) {
+            // 현재 화면에서 문항 데이터 수집
+            const questions = [];
+            document.querySelectorAll(`[id^="${type}-question-"]`).forEach((el, i) => {
+                const textEl = document.getElementById(`${type}-q${i}-text`);
+                if (!textEl) return;
+                const text = textEl.value.trim();
+                const options = [];
+                el.querySelectorAll('input[type="text"]').forEach((inp, j) => {
+                    if (j === 0) return; // 첫 번째는 문항 텍스트
+                    if (inp.value.trim()) options.push(inp.value.trim());
+                });
+                if (text) questions.push({ text, options });
+            });
+
+            try {
+                if (existingId) {
+                    await updateDoc(doc(db, 'surveys', existingId), { questions, type, updated_at: new Date() });
+                } else {
+                    await addDoc(collection(db, 'surveys'), { questions, type, created_at: new Date() });
+                }
+                alert('✅ 설문 문항이 저장되었습니다!\nindex.html에 자동으로 반영됩니다.');
+                await loadSurveys();
+            } catch(e) {
+                alert('저장 오류: ' + e.message);
+            }
+        }
+
+        // ─────────────────────────────────────
+        // ③ 참여 현황 모니터링
+        // ─────────────────────────────────────
+        async function loadStats() {
+            // 총 참여자 수
+            const usersSnap = await getDocs(collection(db, 'users'));
+            const users = [];
+            usersSnap.forEach(d => users.push({ id: d.id, ...d.data() }));
+            document.getElementById('stat-total-users').innerText = users.length;
+
+            // 참여 대상 분포
+            const targetCount = {};
+            users.forEach(u => {
+                const t = u.target || '기타';
+                targetCount[t] = (targetCount[t] || 0) + 1;
+            });
+            renderBarChart('target-stats', targetCount, users.length, '#6366f1');
+
+            // 사전 설문 - AI 인지도 분포
+            const preAnswerCount = {};
+            users.forEach(u => {
+                const ans = u.pre_answers;
+                if (ans && ans['0']) {
+                    const vals = Array.isArray(ans['0']) ? ans['0'] : [ans['0']];
+                    vals.forEach(v => { preAnswerCount[v] = (preAnswerCount[v] || 0) + 1; });
+                }
+            });
+            renderBarChart('pre-survey-stats', preAnswerCount, users.length, '#8b5cf6');
+
+            // 스탬프 로그
+            const stampSnap = await getDocs(collection(db, 'stampLogs'));
+            document.getElementById('stat-total-stamps').innerText = stampSnap.size;
+
+            // 이벤트 완료자
+            const eventSnap = await getDocs(collection(db, 'eventLogs'));
+            document.getElementById('stat-total-events').innerText = eventSnap.size;
+
+            // 부스별 스캔 횟수
+            const boothCount = {};
+            const maxCount = { val: 1 };
+            stampSnap.forEach(d => {
+                const name = d.data().booth_name || d.data().booth_code;
+                boothCount[name] = (boothCount[name] || 0) + 1;
+                if (boothCount[name] > maxCount.val) maxCount.val = boothCount[name];
+            });
+            const boothStatsHtml = Object.entries(boothCount)
+                .sort((a,b) => b[1] - a[1])
+                .map(([name, count]) => {
+                    const pct = Math.round(count / maxCount.val * 100);
+                    return `
+                    <div class="flex items-center gap-3 mb-2">
+                        <span class="text-sm text-gray-700 w-32 truncate">${name}</span>
+                        <div class="flex-1 bg-gray-100 rounded-full h-5 overflow-hidden">
+                            <div class="bg-indigo-400 h-5 rounded-full flex items-center justify-end pr-2 transition-all" style="width:${Math.max(pct,8)}%">
+                                <span class="text-white text-xs font-bold">${count}</span>
+                            </div>
+                        </div>
+                        <span class="text-xs text-gray-500 w-8 text-right">${count}회</span>
+                    </div>`;
+                }).join('');
+            document.getElementById('booth-stats').innerHTML = boothStatsHtml || '<p class="text-gray-400 text-sm">아직 스캔 데이터가 없습니다.</p>';
+
+            // 참여자 목록 (최근 20명)
+            const sorted = [...users].sort((a,b) => {
+                const ta = a.created_at?.seconds || 0;
+                const tb = b.created_at?.seconds || 0;
+                return tb - ta;
+            }).slice(0, 20);
+
+            document.getElementById('user-list').innerHTML = sorted.map(u => `
+                <tr class="border-b border-gray-100 hover:bg-gray-50">
+                    <td class="py-2 px-3 text-sm font-medium text-gray-800">${u.nickname || '-'}</td>
+                    <td class="py-2 px-3 text-sm text-gray-600">${u.target || '-'}</td>
+                    <td class="py-2 px-3 text-sm text-center">
+                        <span class="bg-indigo-100 text-indigo-700 font-bold px-2 py-0.5 rounded-full text-xs">${(u.stamps || []).length}개</span>
+                    </td>
+                    <td class="py-2 px-3 text-sm text-center text-gray-500">
+                        ${u.events && Object.keys(u.events).length > 0
+                            ? Object.keys(u.events).map(e => e.replace('EVENT-','')).join(', ')
+                            : '-'}
+                    </td>
+                </tr>
+            `).join('');
+
+            // 사후 설문 응답 통계 (동/은/금 각각)
+            const surveySnap = await getDocs(collection(db, 'postSurveys'));
+            const tierAnswers = { 3: {}, 6: {}, 9: {} };
+            const tierCounts = { 3: 0, 6: 0, 9: 0 };
+
+            surveySnap.forEach(d => {
+                const data = d.data();
+                const tier = data.tier;
+                if (!tierAnswers[tier]) return;
+                tierCounts[tier]++;
+                // dynamic_answers 수집
+                if (data.dynamic_answers) {
+                    Object.entries(data.dynamic_answers).forEach(([qKey, val]) => {
+                        const key = `${qKey}|||${val}`;
+                        tierAnswers[tier][key] = (tierAnswers[tier][key] || 0) + 1;
+                    });
+                }
+                // 기존 satisfaction 수집
+                if (data.satisfaction) {
+                    const key = `satisfaction|||${data.satisfaction}`;
+                    tierAnswers[tier][key] = (tierAnswers[tier][key] || 0) + 1;
+                }
+            });
+
+            // 동/은/금 설문 통계 렌더링
+            ['bronze','silver','gold'].forEach((tier, i) => {
+                const tierNum = [3,6,9][i];
+                const label = ['🥉 동상','🥈 은상','🥇 금상'][i];
+                const answers = tierAnswers[tierNum];
+                const total = tierCounts[tierNum];
+                const containerId = `${tier}-survey-stats`;
+
+                if (total === 0) {
+                    document.getElementById(containerId).innerHTML =
+                        '<p class="text-gray-400 text-sm">아직 응답이 없습니다.</p>';
+                    return;
+                }
+
+                // 문항별로 그룹핑
+                const grouped = {};
+                Object.entries(answers).forEach(([key, cnt]) => {
+                    const [qKey, val] = key.split('|||');
+                    if (!grouped[qKey]) grouped[qKey] = {};
+                    grouped[qKey][val] = cnt;
+                });
+
+                const colors = ['#10b981','#3b82f6','#8b5cf6','#f59e0b','#ef4444'];
+                document.getElementById(containerId).innerHTML =
+                    `<p class="text-xs text-gray-400 mb-3">총 ${total}명 응답</p>` +
+                    Object.entries(grouped).map(([qKey, vals], gi) => {
+                        const qTotal = Object.values(vals).reduce((a,b)=>a+b,0);
+                        return `<div class="mb-4">
+                            <p class="text-xs font-bold text-gray-500 mb-2">${qKey === 'satisfaction' ? '전반적 만족도' : `문항 ${parseInt(qKey)+1}`}</p>
+                            ${Object.entries(vals).sort((a,b)=>b[1]-a[1]).map(([val, cnt], vi) => {
+                                const pct = Math.round(cnt/qTotal*100);
+                                return `<div class="flex items-center gap-2 mb-1">
+                                    <span class="text-xs text-gray-600 w-32 truncate" title="${val}">${val}</span>
+                                    <div class="flex-1 bg-gray-100 rounded-full h-4 overflow-hidden">
+                                        <div class="h-4 rounded-full transition-all" style="width:${Math.max(pct,4)}%;background:${colors[vi%colors.length]}"></div>
+                                    </div>
+                                    <span class="text-xs font-bold text-gray-600 w-12 text-right">${cnt}명 (${pct}%)</span>
+                                </div>`;
+                            }).join('')}
+                        </div>`;
+                    }).join('');
+            });
+        }
+
+        // ─── 막대 차트 공통 렌더러 ───
+        function renderBarChart(containerId, countObj, total, color) {
+            const el = document.getElementById(containerId);
+            if (!el) return;
+            if (Object.keys(countObj).length === 0) {
+                el.innerHTML = '<p class="text-gray-400 text-sm">데이터 없음</p>';
+                return;
+            }
+            el.innerHTML = Object.entries(countObj)
+                .sort((a,b) => b[1]-a[1])
+                .map(([label, cnt]) => {
+                    const pct = total > 0 ? Math.round(cnt/total*100) : 0;
+                    return `<div class="flex items-center gap-2 mb-1">
+                        <span class="text-xs text-gray-600 w-28 truncate" title="${label}">${label}</span>
+                        <div class="flex-1 bg-gray-100 rounded-full h-4 overflow-hidden">
+                            <div class="h-4 rounded-full transition-all" style="width:${Math.max(pct,4)}%;background:${color}"></div>
+                        </div>
+                        <span class="text-xs font-bold text-gray-600 w-14 text-right">${cnt}명 (${pct}%)</span>
+                    </div>`;
+                }).join('');
+        }
+
+        window.refreshStats = async function() {
+            const btn = document.getElementById('btn-refresh');
+            btn.innerText = '새로고침 중...';
+            await loadStats();
+            btn.innerText = '🔄 새로고침';
+        }
+
+        // ─────────────────────────────────────
+        // 데이터 초기화 (비밀번호 재확인)
+        // ─────────────────────────────────────
+        window.confirmReset = function(type) {
+            const labels = {
+                stamps: '부스 스캔 현황',
+                surveys: '설문 응답 데이터',
+                users: '참여자 목록 전체'
+            };
+            document.getElementById('reset-type').value = type;
+            document.getElementById('reset-label').innerText = labels[type];
+            document.getElementById('reset-password').value = '';
+            document.getElementById('reset-error').style.display = 'none';
+            document.getElementById('reset-modal').style.display = 'flex';
+        }
+
+        window.closeResetModal = function() {
+            document.getElementById('reset-modal').style.display = 'none';
+        }
+
+        window.executeReset = async function() {
+            const pw = document.getElementById('reset-password').value;
+            if (pw !== ADMIN_PASSWORD) {
+                document.getElementById('reset-error').style.display = 'block';
+                return;
+            }
+
+            const type = document.getElementById('reset-type').value;
+            const btn = document.getElementById('btn-do-reset');
+            btn.disabled = true;
+            btn.innerText = '초기화 중...';
+
+            try {
+                if (type === 'stamps') {
+                    // stampLogs 전체 삭제
+                    const snap = await getDocs(collection(db, 'stampLogs'));
+                    await Promise.all(snap.docs.map(d => deleteDoc(doc(db, 'stampLogs', d.id))));
+                    alert('✅ 부스 스캔 현황이 초기화되었습니다.');
+                } else if (type === 'surveys') {
+                    // postSurveys 전체 삭제
+                    const snap = await getDocs(collection(db, 'postSurveys'));
+                    await Promise.all(snap.docs.map(d => deleteDoc(doc(db, 'postSurveys', d.id))));
+                    alert('✅ 설문 응답 데이터가 초기화되었습니다.');
+                } else if (type === 'users') {
+                    // users + stampLogs + postSurveys + eventLogs 전체 삭제
+                    const cols = ['users','stampLogs','postSurveys','eventLogs'];
+                    for (const col of cols) {
+                        const snap = await getDocs(collection(db, col));
+                        await Promise.all(snap.docs.map(d => deleteDoc(doc(db, col, d.id))));
+                    }
+                    alert('✅ 참여자 전체 데이터가 초기화되었습니다.');
+                }
+                closeResetModal();
+                await loadStats();
+            } catch(e) {
+                alert('초기화 중 오류가 발생했습니다: ' + e.message);
+            }
+
+            btn.disabled = false;
+            btn.innerText = '초기화 실행';
+        }
+
+        // window에 노출
+        window.loadBooths = loadBooths;
+        window.loadSurveys = loadSurveys;
+        window.loadStats = loadStats;
+    </script>
+
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+        .tab-btn { transition: all 0.2s; }
+        .tab-btn.active { background: #4f46e5; color: white; }
+        .tab-btn:not(.active) { background: #f3f4f6; color: #6b7280; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+    </style>
+</head>
+
+<body class="bg-gray-100 min-h-screen">
+
+    <!-- ══════════════════ 로그인 화면 ══════════════════ -->
+    <div id="screen-login" class="flex items-center justify-center min-h-screen">
+        <div class="bg-white rounded-2xl shadow-lg p-8 w-full max-w-sm">
+            <h1 class="text-2xl font-bold text-center text-gray-800 mb-2">🔐 관리자 로그인</h1>
+            <p class="text-center text-gray-500 text-sm mb-6">박람회 스탬프 투어 관리자 페이지</p>
+            <input id="input-password" type="password" placeholder="비밀번호 입력"
+                class="w-full border border-gray-300 rounded-lg px-4 py-3 mb-3 focus:outline-none focus:ring-2 focus:ring-indigo-400">
+            <p id="login-error" style="display:none" class="text-red-500 text-sm text-center mb-3">❌ 비밀번호가 틀렸습니다.</p>
+            <button onclick="checkPassword()"
+                class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl">
+                로그인
+            </button>
+        </div>
+    </div>
+
+    <!-- ══════════════════ 관리자 대시보드 ══════════════════ -->
+    <div id="screen-admin" style="display:none" class="max-w-3xl mx-auto p-4">
+
+        <div class="flex items-center justify-between mb-6 mt-4">
+            <h1 class="text-2xl font-bold text-gray-800">⚙️ 관리자 대시보드</h1>
+            <a href="index.html" class="text-sm text-indigo-500 hover:text-indigo-700">← 사용자 페이지</a>
+        </div>
+
+        <!-- 탭 버튼 -->
+        <div class="flex gap-2 mb-6">
+            <button class="tab-btn active flex-1 py-2 rounded-lg font-bold text-sm" onclick="switchTab('booths')">🏪 부스 관리</button>
+            <button class="tab-btn flex-1 py-2 rounded-lg font-bold text-sm" onclick="switchTab('surveys')">📋 설문 관리</button>
+            <button class="tab-btn flex-1 py-2 rounded-lg font-bold text-sm" onclick="switchTab('stats')">📊 현황판</button>
+        </div>
+
+        <!-- ══ 탭①: 부스 관리 ══ -->
+        <div id="tab-booths" class="tab-content active">
+
+            <!-- 일반 부스 -->
+            <div class="bg-white rounded-2xl shadow p-5 mb-4">
+                <h2 class="font-bold text-gray-700 mb-3">🏪 일반 부스 목록</h2>
+                <div id="booth-list" class="flex flex-col gap-2 mb-4"></div>
+                <div class="flex gap-2">
+                    <input id="input-booth-name" type="text" placeholder="부스 이름 입력 (예: 진로상담 부스)"
+                        class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                    <button id="btn-add-booth" onclick="addBooth()"
+                        class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-lg text-sm whitespace-nowrap">
+                        + 부스 추가
+                    </button>
+                </div>
+                <p class="text-xs text-gray-400 mt-2">💡 부스 코드(BOOTH-01 등)는 자동으로 생성됩니다. 코드 클릭 시 복사 가능.</p>
+            </div>
+
+            <!-- 이벤트 부스 -->
+            <div class="bg-white rounded-2xl shadow p-5">
+                <h2 class="font-bold text-gray-700 mb-1">🎁 이벤트 부스 목록</h2>
+                <p class="text-xs text-gray-400 mb-3">동상(EVENT-BRONZE) / 은상(EVENT-SILVER) / 금상(EVENT-GOLD) 최대 3개</p>
+                <div id="event-list" class="flex flex-col gap-2 mb-4"></div>
+                <div class="flex gap-2">
+                    <input id="input-event-name" type="text" placeholder="이벤트 부스 이름 (예: 동상 리워드 부스)"
+                        class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400">
+                    <button id="btn-add-event" onclick="addEventBooth()"
+                        class="bg-green-500 hover:bg-green-600 text-white font-bold px-4 py-2 rounded-lg text-sm whitespace-nowrap">
+                        + 이벤트 부스 추가
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ══ 탭②: 설문 관리 ══ -->
+        <div id="tab-surveys" class="tab-content">
+
+            <!-- 사전 설문 -->
+            <div class="bg-white rounded-2xl shadow p-5 mb-4">
+                <h2 class="font-bold text-gray-700 mb-1">📝 사전 설문 문항</h2>
+                <p class="text-xs text-gray-400 mb-4">스탬프 투어 시작 전 사용자에게 보여지는 문항</p>
+                <div id="pre-survey-editor"></div>
+            </div>
+
+            <!-- 동상 사후 설문 -->
+            <div class="bg-white rounded-2xl shadow p-5 mb-4">
+                <div class="flex items-center gap-2 mb-1">
+                    <span class="text-lg">🥉</span>
+                    <h2 class="font-bold text-gray-700">동상 이벤트 설문 문항</h2>
+                </div>
+                <p class="text-xs text-gray-400 mb-4">스탬프 3개 달성 후 동상 이벤트 부스 참여 시 표시</p>
+                <div id="bronze-survey-editor"></div>
+            </div>
+
+            <!-- 은상 사후 설문 -->
+            <div class="bg-white rounded-2xl shadow p-5 mb-4">
+                <div class="flex items-center gap-2 mb-1">
+                    <span class="text-lg">🥈</span>
+                    <h2 class="font-bold text-gray-700">은상 이벤트 설문 문항</h2>
+                </div>
+                <p class="text-xs text-gray-400 mb-4">스탬프 6개 달성 후 은상 이벤트 부스 참여 시 표시</p>
+                <div id="silver-survey-editor"></div>
+            </div>
+
+            <!-- 금상 사후 설문 -->
+            <div class="bg-white rounded-2xl shadow p-5">
+                <div class="flex items-center gap-2 mb-1">
+                    <span class="text-lg">🥇</span>
+                    <h2 class="font-bold text-gray-700">금상 이벤트 설문 문항</h2>
+                </div>
+                <p class="text-xs text-gray-400 mb-4">스탬프 9개 달성 후 금상 이벤트 부스 참여 시 표시</p>
+                <div id="gold-survey-editor"></div>
+            </div>
+        </div>
+
+        <!-- ══ 탭③: 현황판 ══ -->
+        <div id="tab-stats" class="tab-content">
+
+            <!-- 새로고침 -->
+            <div class="flex justify-end mb-3">
+                <button id="btn-refresh" onclick="refreshStats()"
+                    class="text-sm text-indigo-500 hover:text-indigo-700 font-medium">🔄 새로고침</button>
+            </div>
+
+            <!-- 요약 통계 카드 -->
+            <div class="grid grid-cols-3 gap-3 mb-4">
+                <div class="bg-white rounded-xl shadow p-4 text-center">
+                    <p class="text-xs text-gray-400 mb-1">총 참여자</p>
+                    <p class="text-3xl font-bold text-indigo-600" id="stat-total-users">-</p>
+                    <p class="text-xs text-gray-400">명</p>
+                </div>
+                <div class="bg-white rounded-xl shadow p-4 text-center">
+                    <p class="text-xs text-gray-400 mb-1">총 스탬프</p>
+                    <p class="text-3xl font-bold text-green-600" id="stat-total-stamps">-</p>
+                    <p class="text-xs text-gray-400">개</p>
+                </div>
+                <div class="bg-white rounded-xl shadow p-4 text-center">
+                    <p class="text-xs text-gray-400 mb-1">이벤트 완료</p>
+                    <p class="text-3xl font-bold text-yellow-500" id="stat-total-events">-</p>
+                    <p class="text-xs text-gray-400">건</p>
+                </div>
+            </div>
+
+            <!-- 참여 대상 분포 -->
+            <div class="bg-white rounded-2xl shadow p-5 mb-4">
+                <h2 class="font-bold text-gray-700 mb-3">👥 참여 대상 분포</h2>
+                <div id="target-stats"></div>
+            </div>
+
+            <!-- 사전 설문 - AI 인지도 -->
+            <div class="bg-white rounded-2xl shadow p-5 mb-4">
+                <h2 class="font-bold text-gray-700 mb-3">🧠 사전 설문 — AI·에듀테크 인지도</h2>
+                <div id="pre-survey-stats"></div>
+            </div>
+
+            <!-- 부스별 스캔 현황 -->
+            <div class="bg-white rounded-2xl shadow p-5 mb-4">
+                <div class="flex items-center justify-between mb-3">
+                    <h2 class="font-bold text-gray-700">📍 부스별 스캔 현황</h2>
+                    <button onclick="confirmReset('stamps')"
+                        class="text-xs text-red-400 hover:text-red-600 border border-red-200 rounded px-2 py-1">🗑️ 초기화</button>
+                </div>
+                <div id="booth-stats" class="flex flex-col"></div>
+            </div>
+
+            <!-- 사후 설문 통계 (동/은/금 각각) -->
+            <div class="bg-white rounded-2xl shadow p-5 mb-4">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="font-bold text-gray-700">📋 이벤트 설문 응답 통계</h2>
+                    <button onclick="confirmReset('surveys')"
+                        class="text-xs text-red-400 hover:text-red-600 border border-red-200 rounded px-2 py-1">🗑️ 초기화</button>
+                </div>
+                <div class="mb-5">
+                    <p class="text-sm font-bold text-green-600 mb-2">🥉 동상 이벤트 설문</p>
+                    <div id="bronze-survey-stats"></div>
+                </div>
+                <hr class="mb-5">
+                <div class="mb-5">
+                    <p class="text-sm font-bold text-blue-600 mb-2">🥈 은상 이벤트 설문</p>
+                    <div id="silver-survey-stats"></div>
+                </div>
+                <hr class="mb-5">
+                <div>
+                    <p class="text-sm font-bold text-purple-600 mb-2">🥇 금상 이벤트 설문</p>
+                    <div id="gold-survey-stats"></div>
+                </div>
+            </div>
+
+            <!-- 참여자 목록 -->
+            <div class="bg-white rounded-2xl shadow p-5 mb-6">
+                <div class="flex items-center justify-between mb-3">
+                    <h2 class="font-bold text-gray-700">👥 참여자 목록 (최근 20명)</h2>
+                    <button onclick="confirmReset('users')"
+                        class="text-xs text-red-400 hover:text-red-600 border border-red-200 rounded px-2 py-1">🗑️ 전체 초기화</button>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full">
+                        <thead>
+                            <tr class="border-b-2 border-gray-200">
+                                <th class="text-left py-2 px-3 text-xs font-bold text-gray-500">닉네임</th>
+                                <th class="text-left py-2 px-3 text-xs font-bold text-gray-500">참여대상</th>
+                                <th class="text-center py-2 px-3 text-xs font-bold text-gray-500">스탬프</th>
+                                <th class="text-center py-2 px-3 text-xs font-bold text-gray-500">이벤트</th>
+                            </tr>
+                        </thead>
+                        <tbody id="user-list"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- ══ 초기화 확인 모달 ══ -->
+        <div id="reset-modal" style="display:none;"
+            class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div class="bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm">
+                <h3 class="text-lg font-bold text-gray-800 mb-1">⚠️ 데이터 초기화</h3>
+                <p class="text-sm text-gray-500 mb-4">
+                    <span class="font-bold text-red-500" id="reset-label"></span> 를 초기화합니다.<br>
+                    삭제된 데이터는 복구할 수 없습니다.
+                </p>
+                <input type="hidden" id="reset-type" value="">
+                <label class="block text-sm font-bold text-gray-700 mb-1">관리자 비밀번호 확인 *</label>
+                <input id="reset-password" type="password" placeholder="비밀번호 입력"
+                    class="w-full border border-gray-300 rounded-lg px-3 py-2 mb-2 focus:outline-none focus:ring-2 focus:ring-red-400">
+                <p id="reset-error" style="display:none"
+                    class="text-red-500 text-xs mb-3">❌ 비밀번호가 틀렸습니다.</p>
+                <div class="flex gap-2 mt-3">
+                    <button onclick="closeResetModal()"
+                        class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-2 rounded-lg text-sm">
+                        취소
+                    </button>
+                    <button id="btn-do-reset" onclick="executeReset()"
+                        class="flex-1 bg-red-500 hover:bg-red-600 text-white font-bold py-2 rounded-lg text-sm">
+                        초기화 실행
+                    </button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        function switchTab(tab) {
+            document.querySelectorAll('.tab-btn').forEach((btn, i) => {
+                const tabs = ['booths','surveys','stats'];
+                btn.classList.toggle('active', tabs[i] === tab);
+            });
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.getElementById('tab-' + tab).classList.add('active');
+        }
+    </script>
+</body>
+</html>
