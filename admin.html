@@ -50,6 +50,7 @@
         // ─────────────────────────────────────
         async function loadAll() {
             await loadBooths();
+            await loadNotices();
             await loadSurveys();
             await loadStats();
         }
@@ -133,7 +134,7 @@
             if (!name) { alert('이벤트 부스 이름을 입력해주세요.'); return; }
 
             const code = await generateBoothCode('event');
-            if (!code) { alert('이벤트 부스는 최대 3개(동상/은상/금상)까지 등록 가능합니다.'); return; }
+            if (!code) { alert('이벤트 부스는 최대 3개(동메달/은메달/금메달)까지 등록 가능합니다.'); return; }
 
             const btn = document.getElementById('btn-add-event');
             btn.disabled = true; btn.innerText = '추가 중...';
@@ -366,20 +367,37 @@
                 </tr>
             `).join('');
 
+            // ── surveys 컬렉션에서 문항 텍스트 미리 로드 ──
+            const surveyQSnap = await getDocs(collection(db, 'surveys'));
+            const surveyQuestions = {};  // { 'post-bronze': ['Q1텍스트','Q2텍스트',...], ... }
+            surveyQSnap.forEach(d => {
+                const data = d.data();
+                if (['post-bronze','post-silver','post-gold','pre'].includes(data.type)) {
+                    surveyQuestions[data.type] = (data.questions || []).map(q => q.text);
+                }
+            });
+
+            // 티어 → surveys 타입 매핑
+            const tierToSurveyKey = { 3: 'post-bronze', 6: 'post-silver', 9: 'post-gold' };
+
             // 사후 설문 응답 통계 (동/은/금 각각)
             const surveySnap = await getDocs(collection(db, 'postSurveys'));
             const tierAnswers = { 3: {}, 6: {}, 9: {} };
-            const tierCounts = { 3: 0, 6: 0, 9: 0 };
+            const tierCounts  = { 3: 0,  6: 0,  9: 0  };
 
             surveySnap.forEach(d => {
                 const data = d.data();
                 const tier = data.tier;
                 if (!tierAnswers[tier]) return;
                 tierCounts[tier]++;
-                // dynamic_answers 수집
+
+                // dynamic_answers: { 'dynamic-q0': '답변', 'dynamic-q1': '답변' }
                 if (data.dynamic_answers) {
-                    Object.entries(data.dynamic_answers).forEach(([qKey, val]) => {
-                        const key = `${qKey}|||${val}`;
+                    Object.entries(data.dynamic_answers).forEach(([rawKey, val]) => {
+                        // 'dynamic-q0' → 인덱스 0 추출
+                        const match = rawKey.match(/(\d+)$/);
+                        const idx = match ? match[1] : rawKey;
+                        const key = `q${idx}|||${val}`;
                         tierAnswers[tier][key] = (tierAnswers[tier][key] || 0) + 1;
                     });
                 }
@@ -392,10 +410,11 @@
 
             // 동/은/금 설문 통계 렌더링
             ['bronze','silver','gold'].forEach((tier, i) => {
-                const tierNum = [3,6,9][i];
-                const label = ['🥉 동상','🥈 은상','🥇 금상'][i];
-                const answers = tierAnswers[tierNum];
-                const total = tierCounts[tierNum];
+                const tierNum  = [3, 6, 9][i];
+                const surveyKey = tierToSurveyKey[tierNum];
+                const qTexts   = surveyQuestions[surveyKey] || [];  // 문항 텍스트 배열
+                const answers  = tierAnswers[tierNum];
+                const total    = tierCounts[tierNum];
                 const containerId = `${tier}-survey-stats`;
 
                 if (total === 0) {
@@ -413,20 +432,34 @@
                 });
 
                 const colors = ['#10b981','#3b82f6','#8b5cf6','#f59e0b','#ef4444'];
+
                 document.getElementById(containerId).innerHTML =
                     `<p class="text-xs text-gray-400 mb-3">총 ${total}명 응답</p>` +
-                    Object.entries(grouped).map(([qKey, vals], gi) => {
-                        const qTotal = Object.values(vals).reduce((a,b)=>a+b,0);
-                        return `<div class="mb-4">
-                            <p class="text-xs font-bold text-gray-500 mb-2">${qKey === 'satisfaction' ? '전반적 만족도' : `문항 ${parseInt(qKey)+1}`}</p>
-                            ${Object.entries(vals).sort((a,b)=>b[1]-a[1]).map(([val, cnt], vi) => {
+                    Object.entries(grouped).map(([qKey, vals]) => {
+                        const qTotal = Object.values(vals).reduce((a,b) => a+b, 0);
+
+                        // 문항 텍스트 결정
+                        let qLabel;
+                        if (qKey === 'satisfaction') {
+                            qLabel = '전반적 만족도';
+                        } else {
+                            // qKey = 'q0', 'q1', ... → 인덱스 추출
+                            const idx = parseInt(qKey.replace('q',''));
+                            qLabel = (!isNaN(idx) && qTexts[idx])
+                                ? `Q${idx+1}. ${qTexts[idx]}`
+                                : `문항 ${idx+1}`;
+                        }
+
+                        return `<div class="mb-5 pb-4 border-b border-gray-100 last:border-0">
+                            <p class="text-sm font-bold text-gray-700 mb-2">${qLabel}</p>
+                            ${Object.entries(vals).sort((a,b) => b[1]-a[1]).map(([val, cnt], vi) => {
                                 const pct = Math.round(cnt/qTotal*100);
                                 return `<div class="flex items-center gap-2 mb-1">
-                                    <span class="text-xs text-gray-600 w-32 truncate" title="${val}">${val}</span>
+                                    <span class="text-xs text-gray-600 w-36 truncate" title="${val}">${val}</span>
                                     <div class="flex-1 bg-gray-100 rounded-full h-4 overflow-hidden">
                                         <div class="h-4 rounded-full transition-all" style="width:${Math.max(pct,4)}%;background:${colors[vi%colors.length]}"></div>
                                     </div>
-                                    <span class="text-xs font-bold text-gray-600 w-12 text-right">${cnt}명 (${pct}%)</span>
+                                    <span class="text-xs font-bold text-gray-600 w-14 text-right">${cnt}명 (${pct}%)</span>
                                 </div>`;
                             }).join('')}
                         </div>`;
@@ -525,8 +558,65 @@
             btn.innerText = '초기화 실행';
         }
 
+        // ─────────────────────────────────────
+        // 공지사항 관리
+        // ─────────────────────────────────────
+        async function loadNotices() {
+            try {
+                const snap = await getDocs(collection(db, 'notices'));
+                const notices = [];
+                snap.forEach(d => notices.push({ id: d.id, ...d.data() }));
+                notices.sort((a,b) => (a.order||0) - (b.order||0));
+                renderNoticeList(notices);
+            } catch(e) { console.error('공지 로드 실패:', e); }
+        }
+
+        function renderNoticeList(notices) {
+            const container = document.getElementById('notice-list');
+            if (notices.length === 0) {
+                container.innerHTML = '<p class="text-gray-400 text-sm text-center py-3">등록된 공지사항이 없습니다.</p>';
+                return;
+            }
+            container.innerHTML = notices.map((n, i) => `
+                <div class="flex items-center gap-3 bg-gray-50 rounded-lg px-3 py-2 border border-gray-200">
+                    <span class="text-gray-400 text-xs font-mono w-5">${i+1}</span>
+                    <span class="flex-1 text-sm text-gray-800">${n.text}</span>
+                    <button onclick="deleteNotice('${n.id}')"
+                        class="text-red-400 hover:text-red-600 text-sm px-2 py-1 rounded hover:bg-red-50">🗑️</button>
+                </div>
+            `).join('');
+        }
+
+        window.addNotice = async function() {
+            const text = document.getElementById('input-notice').value.trim();
+            if (!text) { alert('공지사항 내용을 입력해주세요.'); return; }
+
+            const btn = document.getElementById('btn-add-notice');
+            btn.disabled = true; btn.innerText = '추가 중...';
+
+            try {
+                const snap = await getDocs(collection(db, 'notices'));
+                await addDoc(collection(db, 'notices'), {
+                    text: text,
+                    order: snap.size,
+                    created_at: new Date()
+                });
+                document.getElementById('input-notice').value = '';
+                await loadNotices();
+            } catch(e) { alert('오류: ' + e.message); }
+
+            btn.disabled = false; btn.innerText = '+ 추가';
+        }
+
+        window.deleteNotice = async function(id) {
+            if (!confirm('이 공지사항을 삭제하시겠습니까?')) return;
+            await deleteDoc(doc(db, 'notices', id));
+            await loadNotices();
+        }
+
         // window에 노출
         window.loadBooths = loadBooths;
+        window.loadNotices = loadNotices;
         window.loadSurveys = loadSurveys;
         window.loadStats = loadStats;
     </script>
@@ -568,8 +658,9 @@
 
         <!-- 탭 버튼 -->
         <div class="flex gap-2 mb-6">
-            <button class="tab-btn active flex-1 py-2 rounded-lg font-bold text-sm" onclick="switchTab('booths')">🏪 부스 관리</button>
-            <button class="tab-btn flex-1 py-2 rounded-lg font-bold text-sm" onclick="switchTab('surveys')">📋 설문 관리</button>
+            <button class="tab-btn active flex-1 py-2 rounded-lg font-bold text-sm" onclick="switchTab('booths')">🏪 부스</button>
+            <button class="tab-btn flex-1 py-2 rounded-lg font-bold text-sm" onclick="switchTab('notices')">📢 공지</button>
+            <button class="tab-btn flex-1 py-2 rounded-lg font-bold text-sm" onclick="switchTab('surveys')">📋 설문</button>
             <button class="tab-btn flex-1 py-2 rounded-lg font-bold text-sm" onclick="switchTab('stats')">📊 현황판</button>
         </div>
 
@@ -594,10 +685,10 @@
             <!-- 이벤트 부스 -->
             <div class="bg-white rounded-2xl shadow p-5">
                 <h2 class="font-bold text-gray-700 mb-1">🎁 이벤트 부스 목록</h2>
-                <p class="text-xs text-gray-400 mb-3">동상(EVENT-BRONZE) / 은상(EVENT-SILVER) / 금상(EVENT-GOLD) 최대 3개</p>
+                <p class="text-xs text-gray-400 mb-3">동메달(EVENT-BRONZE) / 은메달(EVENT-SILVER) / 금메달(EVENT-GOLD) 최대 3개</p>
                 <div id="event-list" class="flex flex-col gap-2 mb-4"></div>
                 <div class="flex gap-2">
-                    <input id="input-event-name" type="text" placeholder="이벤트 부스 이름 (예: 동상 리워드 부스)"
+                    <input id="input-event-name" type="text" placeholder="이벤트 부스 이름 (예: 동메달 리워드 부스)"
                         class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400">
                     <button id="btn-add-event" onclick="addEventBooth()"
                         class="bg-green-500 hover:bg-green-600 text-white font-bold px-4 py-2 rounded-lg text-sm whitespace-nowrap">
@@ -607,7 +698,26 @@
             </div>
         </div>
 
-        <!-- ══ 탭②: 설문 관리 ══ -->
+        <!-- ══ 탭②: 공지사항 관리 ══ -->
+        <div id="tab-notices" class="tab-content">
+            <div class="bg-white rounded-2xl shadow p-5 mb-4">
+                <h2 class="font-bold text-gray-700 mb-1">📢 전광판 공지사항 관리</h2>
+                <p class="text-xs text-gray-400 mb-4">여기서 추가/삭제하면 전광판(display.html)에 실시간으로 반영됩니다.</p>
+                <div id="notice-list" class="flex flex-col gap-2 mb-4"></div>
+                <div class="flex gap-2">
+                    <input id="input-notice" type="text"
+                        placeholder="예) 🤖 AI 체험 부스에서 인공지능을 만나보세요!"
+                        class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                    <button id="btn-add-notice" onclick="addNotice()"
+                        class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-lg text-sm whitespace-nowrap">
+                        + 추가
+                    </button>
+                </div>
+                <p class="text-xs text-gray-400 mt-2">💡 공지사항은 4초마다 자동으로 순환 표시됩니다.</p>
+            </div>
+        </div>
+
+        <!-- ══ 탭③: 설문 관리 ══ -->
         <div id="tab-surveys" class="tab-content">
 
             <!-- 사전 설문 -->
@@ -617,33 +727,33 @@
                 <div id="pre-survey-editor"></div>
             </div>
 
-            <!-- 동상 사후 설문 -->
+            <!-- 동메달 사후 설문 -->
             <div class="bg-white rounded-2xl shadow p-5 mb-4">
                 <div class="flex items-center gap-2 mb-1">
                     <span class="text-lg">🥉</span>
-                    <h2 class="font-bold text-gray-700">동상 이벤트 설문 문항</h2>
+                    <h2 class="font-bold text-gray-700">동메달 이벤트 설문 문항</h2>
                 </div>
-                <p class="text-xs text-gray-400 mb-4">스탬프 3개 달성 후 동상 이벤트 부스 참여 시 표시</p>
+                <p class="text-xs text-gray-400 mb-4">스탬프 3개 달성 후 동메달 이벤트 부스 참여 시 표시</p>
                 <div id="bronze-survey-editor"></div>
             </div>
 
-            <!-- 은상 사후 설문 -->
+            <!-- 은메달 사후 설문 -->
             <div class="bg-white rounded-2xl shadow p-5 mb-4">
                 <div class="flex items-center gap-2 mb-1">
                     <span class="text-lg">🥈</span>
-                    <h2 class="font-bold text-gray-700">은상 이벤트 설문 문항</h2>
+                    <h2 class="font-bold text-gray-700">은메달 이벤트 설문 문항</h2>
                 </div>
-                <p class="text-xs text-gray-400 mb-4">스탬프 6개 달성 후 은상 이벤트 부스 참여 시 표시</p>
+                <p class="text-xs text-gray-400 mb-4">스탬프 6개 달성 후 은메달 이벤트 부스 참여 시 표시</p>
                 <div id="silver-survey-editor"></div>
             </div>
 
-            <!-- 금상 사후 설문 -->
+            <!-- 금메달 사후 설문 -->
             <div class="bg-white rounded-2xl shadow p-5">
                 <div class="flex items-center gap-2 mb-1">
                     <span class="text-lg">🥇</span>
-                    <h2 class="font-bold text-gray-700">금상 이벤트 설문 문항</h2>
+                    <h2 class="font-bold text-gray-700">금메달 이벤트 설문 문항</h2>
                 </div>
-                <p class="text-xs text-gray-400 mb-4">스탬프 9개 달성 후 금상 이벤트 부스 참여 시 표시</p>
+                <p class="text-xs text-gray-400 mb-4">스탬프 9개 달성 후 금메달 이벤트 부스 참여 시 표시</p>
                 <div id="gold-survey-editor"></div>
             </div>
         </div>
@@ -706,17 +816,17 @@
                         class="text-xs text-red-400 hover:text-red-600 border border-red-200 rounded px-2 py-1">🗑️ 초기화</button>
                 </div>
                 <div class="mb-5">
-                    <p class="text-sm font-bold text-green-600 mb-2">🥉 동상 이벤트 설문</p>
+                    <p class="text-sm font-bold text-green-600 mb-2">🥉 동메달 이벤트 설문</p>
                     <div id="bronze-survey-stats"></div>
                 </div>
                 <hr class="mb-5">
                 <div class="mb-5">
-                    <p class="text-sm font-bold text-blue-600 mb-2">🥈 은상 이벤트 설문</p>
+                    <p class="text-sm font-bold text-blue-600 mb-2">🥈 은메달 이벤트 설문</p>
                     <div id="silver-survey-stats"></div>
                 </div>
                 <hr class="mb-5">
                 <div>
-                    <p class="text-sm font-bold text-purple-600 mb-2">🥇 금상 이벤트 설문</p>
+                    <p class="text-sm font-bold text-purple-600 mb-2">🥇 금메달 이벤트 설문</p>
                     <div id="gold-survey-stats"></div>
                 </div>
             </div>
@@ -777,7 +887,7 @@
     <script>
         function switchTab(tab) {
             document.querySelectorAll('.tab-btn').forEach((btn, i) => {
-                const tabs = ['booths','surveys','stats'];
+                const tabs = ['booths','notices','surveys','stats'];
                 btn.classList.toggle('active', tabs[i] === tab);
             });
             document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));

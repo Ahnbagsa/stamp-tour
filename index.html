@@ -280,46 +280,46 @@
             const count = myStamps.length;
             document.getElementById('stamp-count').innerText = count;
 
-            // 동상 버튼 (3개)
+            // 동메달 버튼 (3개)
             const btn3 = document.getElementById('btn-tier-3');
             if (count >= 3) {
                 btn3.disabled = false;
                 if (myEvents['EVENT-BRONZE']) {
                     // 이벤트 완료 표시
                     btn3.className = "w-full bg-gray-100 text-gray-400 font-bold py-3 rounded-lg mt-2 cursor-not-allowed";
-                    btn3.innerHTML = '<span style="text-decoration:line-through;">🥉 동상 이벤트 부스 참여하기</span> ✅ 완료';
+                    btn3.innerHTML = '<span style="text-decoration:line-through;">🥉 동메달 이벤트 부스 참여하기</span> ✅ 완료';
                     btn3.disabled = true;
                 } else {
                     btn3.className = "w-full bg-green-500 text-white font-bold py-3 rounded-lg shadow mt-2";
-                    btn3.innerHTML = '🥉 동상 이벤트 부스 참여하기';
+                    btn3.innerHTML = '🥉 동메달 이벤트 부스 참여하기';
                 }
             }
 
-            // 은상 버튼 (6개)
+            // 은메달 버튼 (6개)
             const btn6 = document.getElementById('btn-tier-6');
             if (count >= 6) {
                 btn6.disabled = false;
                 if (myEvents['EVENT-SILVER']) {
                     btn6.className = "w-full bg-gray-100 text-gray-400 font-bold py-3 rounded-lg mt-2 cursor-not-allowed";
-                    btn6.innerHTML = '<span style="text-decoration:line-through;">🥈 은상 이벤트 부스 참여하기</span> ✅ 완료';
+                    btn6.innerHTML = '<span style="text-decoration:line-through;">🥈 은메달 이벤트 부스 참여하기</span> ✅ 완료';
                     btn6.disabled = true;
                 } else {
                     btn6.className = "w-full bg-blue-500 text-white font-bold py-3 rounded-lg shadow mt-2";
-                    btn6.innerHTML = '🥈 은상 이벤트 부스 참여하기';
+                    btn6.innerHTML = '🥈 은메달 이벤트 부스 참여하기';
                 }
             }
 
-            // 금상 버튼 (9개)
+            // 금메달 버튼 (9개)
             const btn9 = document.getElementById('btn-tier-9');
             if (count >= 9) {
                 btn9.disabled = false;
                 if (myEvents['EVENT-GOLD']) {
                     btn9.className = "w-full bg-gray-100 text-gray-400 font-bold py-3 rounded-lg mt-2 cursor-not-allowed";
-                    btn9.innerHTML = '<span style="text-decoration:line-through;">🥇 금상 이벤트 부스 참여하기</span> ✅ 완료';
+                    btn9.innerHTML = '<span style="text-decoration:line-through;">🥇 금메달 이벤트 부스 참여하기</span> ✅ 완료';
                     btn9.disabled = true;
                 } else {
                     btn9.className = "w-full bg-purple-600 text-white font-bold py-3 rounded-lg shadow mt-2";
-                    btn9.innerHTML = '🥇 금상 이벤트 부스 참여하기';
+                    btn9.innerHTML = '🥇 금메달 이벤트 부스 참여하기';
                 }
             }
         }
@@ -507,7 +507,7 @@
 
             // 티어별 설문 문항 렌더링
             const surveyKey = { 3: 'post-bronze', 6: 'post-silver', 9: 'post-gold' }[tier];
-            const tierLabel = { 3: '🥉 동상', 6: '🥈 은상', 9: '🥇 금상' }[tier];
+            const tierLabel = { 3: '🥉 동메달', 6: '🥈 은메달', 9: '🥇 금메달' }[tier];
 
             document.getElementById('survey-tier').value = tier;
             document.getElementById('survey-tier-label').innerText = tierLabel;
@@ -707,15 +707,15 @@
         <h2 class="font-bold text-gray-600 mb-2">🎁 리워드 교환</h2>
         <button id="btn-tier-3" disabled onclick="openRewardSurvey(3)"
             class="w-full bg-gray-200 text-gray-400 font-bold py-3 rounded-lg mt-2 cursor-not-allowed">
-            🔒 동상 부스 (스탬프 3개 필요)
+            🔒 동메달 부스 (스탬프 3개 필요)
         </button>
         <button id="btn-tier-6" disabled onclick="openRewardSurvey(6)"
             class="w-full bg-gray-200 text-gray-400 font-bold py-3 rounded-lg mt-2 cursor-not-allowed">
-            🔒 은상 부스 (스탬프 6개 필요)
+            🔒 은메달 부스 (스탬프 6개 필요)
         </button>
         <button id="btn-tier-9" disabled onclick="openRewardSurvey(9)"
             class="w-full bg-gray-200 text-gray-400 font-bold py-3 rounded-lg mt-2 cursor-not-allowed">
-            🔒 금상 부스 (스탬프 9개 필요)
+            🔒 금메달 부스 (스탬프 9개 필요)
         </button>
     </div>
 

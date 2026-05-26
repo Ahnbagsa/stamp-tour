@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>에듀테크 AI 과학 교육박람회 - 실시간 현황</title>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Noto+Sans+KR:wght@300;400;700&display=swap" rel="stylesheet">
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
+        import { getFirestore, collection, onSnapshot, getDocs } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyDRS1hoA3dGERshLikDkspfNp5GT10iyF0",
+            authDomain: "stamp-tour-a6ba6.firebaseapp.com",
+            projectId: "stamp-tour-a6ba6",
+            storageBucket: "stamp-tour-a6ba6.firebasestorage.app",
+            messagingSenderId: "646092817201",
+            appId: "1:646092817201:web:1130dd162e6f8e32eaa610"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        let boothNames = {};
+
+        // 부스 이름 미리 로드
+        async function loadBoothNames() {
+            const snap = await getDocs(collection(db, 'booths'));
+            snap.forEach(d => {
+                const data = d.data();
+                boothNames[data.code] = data.name;
+            });
+        }
+
+        // 실시간 사용자 수
+        onSnapshot(collection(db, 'users'), snap => {
+            document.getElementById('total-users').textContent = snap.size;
+            animateNumber('total-users');
+
+            // 참여 대상 분포
+            const targetCount = {};
+            snap.forEach(d => {
+                const t = d.data().target || '기타';
+                targetCount[t] = (targetCount[t] || 0) + 1;
+            });
+            renderTargetChart(targetCount, snap.size);
+
+            // 스탬프 달성 현황
+            let s3=0, s6=0, s9=0;
+            snap.forEach(d => {
+                const cnt = (d.data().stamps || []).length;
+                if (cnt >= 9) s9++;
+                else if (cnt >= 6) s6++;
+                else if (cnt >= 3) s3++;
+            });
+            document.getElementById('tier-bronze').textContent = s3;
+            document.getElementById('tier-silver').textContent = s6;
+            document.getElementById('tier-gold').textContent = s9;
+        });
+
+        // 실시간 스탬프 로그 → 인기 부스 랭킹
+        onSnapshot(collection(db, 'stampLogs'), snap => {
+            document.getElementById('total-stamps').textContent = snap.size;
+            animateNumber('total-stamps');
+
+            const boothCount = {};
+            snap.forEach(d => {
+                const name = d.data().booth_name || boothNames[d.data().booth_code] || d.data().booth_code;
+                boothCount[name] = (boothCount[name] || 0) + 1;
+            });
+
+            const sorted = Object.entries(boothCount).sort((a,b) => b[1]-a[1]).slice(0, 5);
+            const max = sorted[0]?.[1] || 1;
+            const medals = ['🥇','🥈','🥉','4️⃣','5️⃣'];
+
+            document.getElementById('booth-ranking').innerHTML = sorted.length === 0
+                ? '<div class="no-data">아직 스캔 데이터가 없습니다</div>'
+                : sorted.map(([name, cnt], i) => `
+                    <div class="booth-row" style="animation-delay:${i*0.1}s">
+                        <span class="booth-medal">${medals[i]}</span>
+                        <span class="booth-name">${name}</span>
+                        <div class="booth-bar-wrap">
+                            <div class="booth-bar" style="width:${Math.round(cnt/max*100)}%"></div>
+                        </div>
+                        <span class="booth-count">${cnt}<span class="unit">회</span></span>
+                    </div>
+                `).join('');
+        });
+
+        // 실시간 이벤트 완료자
+        onSnapshot(collection(db, 'eventLogs'), snap => {
+            document.getElementById('total-events').textContent = snap.size;
+            animateNumber('total-events');
+        });
+
+        // 실시간 사전 설문 (AI 인지도)
+        onSnapshot(collection(db, 'users'), snap => {
+            const preCount = {};
+            let total = 0;
+            snap.forEach(d => {
+                const ans = d.data().pre_answers;
+                if (ans && ans['0']) {
+                    const vals = Array.isArray(ans['0']) ? ans['0'] : [ans['0']];
+                    vals.forEach(v => {
+                        preCount[v] = (preCount[v] || 0) + 1;
+                        total++;
+                    });
+                }
+            });
+            renderPreChart(preCount, total);
+        });
+
+        function renderTargetChart(data, total) {
+            const colors = ['#00d4ff','#7b61ff','#ff6b9d','#ffd166','#06d6a0'];
+            const entries = Object.entries(data).sort((a,b)=>b[1]-a[1]);
+            document.getElementById('target-chart').innerHTML = entries.map(([label, cnt], i) => {
+                const pct = total > 0 ? Math.round(cnt/total*100) : 0;
+                return `<div class="pie-row">
+                    <span class="pie-dot" style="background:${colors[i%colors.length]}"></span>
+                    <span class="pie-label">${label}</span>
+                    <div class="pie-bar-wrap">
+                        <div class="pie-bar" style="width:${pct}%;background:${colors[i%colors.length]}"></div>
+                    </div>
+                    <span class="pie-pct">${pct}%</span>
+                </div>`;
+            }).join('') || '<div class="no-data">데이터 없음</div>';
+        }
+
+        function renderPreChart(data, total) {
+            const colors = ['#00d4ff','#7b61ff','#ff6b9d','#ffd166'];
+            const entries = Object.entries(data).sort((a,b)=>b[1]-a[1]);
+            document.getElementById('pre-chart').innerHTML = entries.map(([label, cnt], i) => {
+                const pct = total > 0 ? Math.round(cnt/total*100) : 0;
+                return `<div class="pie-row">
+                    <span class="pie-dot" style="background:${colors[i%colors.length]}"></span>
+                    <span class="pie-label">${label}</span>
+                    <div class="pie-bar-wrap">
+                        <div class="pie-bar" style="width:${pct}%;background:${colors[i%colors.length]}"></div>
+                    </div>
+                    <span class="pie-pct">${pct}%</span>
+                </div>`;
+            }).join('') || '<div class="no-data">데이터 없음</div>';
+        }
+
+        function animateNumber(id) {
+            const el = document.getElementById(id);
+            el.classList.remove('pop');
+            void el.offsetWidth;
+            el.classList.add('pop');
+        }
+
+        // 현재 시각
+        function updateClock() {
+            const now = new Date();
+            const h = String(now.getHours()).padStart(2,'0');
+            const m = String(now.getMinutes()).padStart(2,'0');
+            const s = String(now.getSeconds()).padStart(2,'0');
+            document.getElementById('clock').textContent = `${h}:${m}:${s}`;
+        }
+        setInterval(updateClock, 1000);
+        updateClock();
+
+        // 공지 텍스트 — Firebase notices 컬렉션 실시간 연동
+        let notices = [
+            '📱 QR코드 스캔으로 스탬프를 모아 리워드를 받아가세요!',
+        ];
+        let noticeIdx = 0;
+        let noticeTimer = null;
+
+        function startNoticeRotation() {
+            if (noticeTimer) clearInterval(noticeTimer);
+            if (notices.length === 0) return;
+            document.getElementById('notice-text').textContent = notices[0];
+            noticeIdx = 0;
+            noticeTimer = setInterval(() => {
+                const el = document.getElementById('notice-text');
+                el.style.opacity = '0';
+                setTimeout(() => {
+                    noticeIdx = (noticeIdx + 1) % notices.length;
+                    el.textContent = notices[noticeIdx];
+                    el.style.opacity = '1';
+                }, 500);
+            }, 4000);
+        }
+
+        // Firebase notices 실시간 구독
+        onSnapshot(collection(db, 'notices'), snap => {
+            const loaded = [];
+            snap.forEach(d => loaded.push({ order: d.data().order || 0, text: d.data().text }));
+            loaded.sort((a,b) => a.order - b.order);
+            if (loaded.length > 0) {
+                notices = loaded.map(n => n.text);
+            } else {
+                notices = ['📱 QR코드 스캔으로 스탬프를 모아 리워드를 받아가세요!'];
+            }
+            startNoticeRotation();
+        });
+
+        startNoticeRotation();
+
+        loadBoothNames();
+    </script>
+
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background: #020818;
+            color: #e0f0ff;
+            font-family: 'Noto Sans KR', sans-serif;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* 배경 그리드 + 글로우 */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background-image:
+                linear-gradient(rgba(0,212,255,0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0,212,255,0.03) 1px, transparent 1px);
+            background-size: 60px 60px;
+            pointer-events: none;
+        }
+        body::after {
+            content: '';
+            position: fixed;
+            top: -200px; left: 50%;
+            transform: translateX(-50%);
+            width: 800px; height: 400px;
+            background: radial-gradient(ellipse, rgba(0,120,255,0.12) 0%, transparent 70%);
+            pointer-events: none;
+        }
+
+        /* ── 헤더 ── */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 32px;
+            border-bottom: 1px solid rgba(0,212,255,0.2);
+            background: rgba(0,20,60,0.6);
+            backdrop-filter: blur(10px);
+            position: relative;
+            z-index: 10;
+        }
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+        .ai-badge {
+            background: linear-gradient(135deg, #0047ff, #00d4ff);
+            color: #fff;
+            font-family: 'Orbitron', monospace;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 4px 10px;
+            border-radius: 4px;
+            letter-spacing: 2px;
+        }
+        .event-title {
+            font-family: 'Orbitron', monospace;
+            font-size: 22px;
+            font-weight: 700;
+            color: #00d4ff;
+            text-shadow: 0 0 20px rgba(0,212,255,0.5);
+            letter-spacing: 1px;
+        }
+        .event-sub {
+            font-size: 13px;
+            color: rgba(0,212,255,0.6);
+            margin-top: 2px;
+            letter-spacing: 3px;
+        }
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+        .clock {
+            font-family: 'Orbitron', monospace;
+            font-size: 28px;
+            font-weight: 700;
+            color: #00d4ff;
+            text-shadow: 0 0 15px rgba(0,212,255,0.6);
+        }
+        .live-badge {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: #06d6a0;
+            font-weight: 700;
+            letter-spacing: 2px;
+        }
+        .live-dot {
+            width: 8px; height: 8px;
+            background: #06d6a0;
+            border-radius: 50%;
+            animation: blink 1s infinite;
+        }
+        @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+
+        /* ── 공지 띠 ── */
+        .notice-bar {
+            background: linear-gradient(90deg, rgba(0,60,120,0.6), rgba(0,40,90,0.5), rgba(0,60,120,0.6));
+            border-top: 1px solid rgba(0,212,255,0.25);
+            border-bottom: 2px solid rgba(0,212,255,0.3);
+            padding: 13px 32px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            position: relative;
+            overflow: hidden;
+        }
+        /* 흐르는 빛 효과 */
+        .notice-bar::after {
+            content: '';
+            position: absolute;
+            top: 0; left: -100%;
+            width: 60%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(0,212,255,0.06), transparent);
+            animation: shine 3s linear infinite;
+        }
+        @keyframes shine { to { left: 160%; } }
+
+        .notice-label {
+            font-family: 'Orbitron', monospace;
+            font-size: 11px;
+            font-weight: 700;
+            color: #fff;
+            letter-spacing: 3px;
+            white-space: nowrap;
+            background: rgba(0,180,255,0.25);
+            border: 1px solid rgba(0,212,255,0.5);
+            padding: 5px 14px;
+            border-radius: 4px;
+            text-shadow: 0 0 8px rgba(0,212,255,0.6);
+            flex-shrink: 0;
+        }
+        .notice-divider {
+            width: 1px;
+            height: 28px;
+            background: rgba(0,212,255,0.3);
+            flex-shrink: 0;
+        }
+        #notice-text {
+            font-size: 20px;
+            font-weight: 700;
+            color: #d0edff;
+            letter-spacing: 0.5px;
+            line-height: 1.3;
+            transition: opacity 0.6s ease;
+            text-shadow: 0 1px 8px rgba(0,100,200,0.4);
+        }
+
+        /* ── 메인 그리드 ── */
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 1.2fr 1fr;
+            grid-template-rows: 1fr 1fr;
+            gap: 12px;
+            padding: 12px 20px;
+            height: calc(100vh - 126px);
+        }
+
+        /* ── 카드 공통 ── */
+        .card {
+            background: rgba(5,20,50,0.7);
+            border: 1px solid rgba(0,212,255,0.15);
+            border-radius: 12px;
+            padding: 16px 20px;
+            backdrop-filter: blur(8px);
+            position: relative;
+            overflow: hidden;
+        }
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, #00d4ff, transparent);
+        }
+        .card-title {
+            font-family: 'Orbitron', monospace;
+            font-size: 11px;
+            color: rgba(0,212,255,0.7);
+            letter-spacing: 2px;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .card-title::before {
+            content: '';
+            width: 3px; height: 14px;
+            background: #00d4ff;
+            border-radius: 2px;
+        }
+
+        /* ── 요약 통계 카드 ── */
+        .stats-card {
+            grid-column: 1;
+            grid-row: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        .stat-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            flex: 1;
+        }
+        .stat-box {
+            background: rgba(0,212,255,0.05);
+            border: 1px solid rgba(0,212,255,0.1);
+            border-radius: 8px;
+            padding: 12px;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+        .stat-label {
+            font-size: 11px;
+            color: rgba(160,212,255,0.6);
+            margin-bottom: 6px;
+        }
+        .stat-value {
+            font-family: 'Orbitron', monospace;
+            font-size: 36px;
+            font-weight: 900;
+            color: #00d4ff;
+            text-shadow: 0 0 20px rgba(0,212,255,0.5);
+            line-height: 1;
+        }
+        .stat-unit {
+            font-size: 12px;
+            color: rgba(0,212,255,0.5);
+            margin-top: 4px;
+        }
+        @keyframes pop { 0%{transform:scale(1.2)} 100%{transform:scale(1)} }
+        .pop { animation: pop 0.3s ease-out; }
+
+        /* ── 인기 부스 랭킹 ── */
+        .ranking-card {
+            grid-column: 2;
+            grid-row: 1 / 3;
+        }
+        .booth-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 14px;
+            animation: fadeIn 0.4s ease both;
+        }
+        @keyframes fadeIn { from{opacity:0;transform:translateX(-10px)} to{opacity:1;transform:none} }
+        .booth-medal { font-size: 20px; width: 28px; }
+        .booth-name {
+            font-size: 13px;
+            color: #c0e0ff;
+            width: 130px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .booth-bar-wrap {
+            flex: 1;
+            height: 8px;
+            background: rgba(0,212,255,0.1);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .booth-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #0047ff, #00d4ff);
+            border-radius: 4px;
+            transition: width 1s ease;
+            box-shadow: 0 0 8px rgba(0,212,255,0.4);
+        }
+        .booth-count {
+            font-family: 'Orbitron', monospace;
+            font-size: 16px;
+            font-weight: 700;
+            color: #00d4ff;
+            width: 50px;
+            text-align: right;
+        }
+        .unit { font-size: 10px; color: rgba(0,212,255,0.5); }
+
+        /* ── 스탬프 달성 ── */
+        .tier-card {
+            grid-column: 3;
+            grid-row: 1;
+        }
+        .tier-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            height: calc(100% - 30px);
+            justify-content: center;
+        }
+        .tier-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            background: rgba(0,212,255,0.04);
+            border: 1px solid rgba(0,212,255,0.1);
+            border-radius: 8px;
+            padding: 10px 14px;
+        }
+        .tier-icon { font-size: 24px; }
+        .tier-info { flex: 1; }
+        .tier-name { font-size: 12px; color: rgba(160,212,255,0.7); }
+        .tier-val {
+            font-family: 'Orbitron', monospace;
+            font-size: 28px;
+            font-weight: 900;
+            line-height: 1;
+        }
+        .tier-val.bronze { color: #cd7f32; text-shadow: 0 0 10px rgba(205,127,50,0.4); }
+        .tier-val.silver { color: #c0c0c0; text-shadow: 0 0 10px rgba(192,192,192,0.4); }
+        .tier-val.gold   { color: #ffd166; text-shadow: 0 0 10px rgba(255,209,102,0.4); }
+        .tier-unit { font-size: 11px; color: rgba(160,212,255,0.4); }
+
+        /* ── 참여 대상 분포 ── */
+        .target-card {
+            grid-column: 1;
+            grid-row: 2;
+        }
+
+        /* ── AI 인지도 ── */
+        .pre-card {
+            grid-column: 3;
+            grid-row: 2;
+        }
+
+        /* ── 차트 공통 ── */
+        .pie-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        .pie-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .pie-label {
+            font-size: 12px;
+            color: #a0c8e8;
+            width: 80px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .pie-bar-wrap {
+            flex: 1;
+            height: 6px;
+            background: rgba(255,255,255,0.06);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        .pie-bar {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 1s ease;
+            opacity: 0.85;
+        }
+        .pie-pct {
+            font-family: 'Orbitron', monospace;
+            font-size: 12px;
+            color: #00d4ff;
+            width: 36px;
+            text-align: right;
+        }
+        .no-data {
+            font-size: 12px;
+            color: rgba(160,212,255,0.3);
+            text-align: center;
+            margin-top: 20px;
+        }
+
+        /* 스캔 파동 애니메이션 */
+        @keyframes scan {
+            0% { transform: translateY(-100%); opacity: 0.4; }
+            100% { transform: translateY(100vh); opacity: 0; }
+        }
+        .scan-line {
+            position: fixed;
+            left: 0; right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent);
+            animation: scan 4s linear infinite;
+            pointer-events: none;
+            z-index: 1;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="scan-line"></div>
+
+    <!-- 헤더 -->
+    <div class="header">
+        <div class="header-left">
+            <div>
+                <div style="display:flex;align-items:center;gap:10px">
+                    <span class="ai-badge">AI · EDU</span>
+                    <span class="event-title">에듀테크 AI 과학 교육박람회</span>
+                </div>
+                <div class="event-sub">EDTECH AI SCIENCE EDUCATION EXPO · REAL-TIME DASHBOARD</div>
+            </div>
+        </div>
+        <div class="header-right">
+            <div class="live-badge">
+                <div class="live-dot"></div>
+                LIVE
+            </div>
+            <div class="clock" id="clock">00:00:00</div>
+        </div>
+    </div>
+
+    <!-- 공지 띠 -->
+    <div class="notice-bar">
+        <span class="notice-label">📢 NOTICE</span>
+        <div class="notice-divider"></div>
+        <span id="notice-text"></span>
+    </div>
+
+    <!-- 메인 그리드 -->
+    <div class="main-grid">
+
+        <!-- 요약 통계 -->
+        <div class="card stats-card">
+            <div class="card-title">실시간 참여 현황</div>
+            <div class="stat-grid">
+                <div class="stat-box">
+                    <div class="stat-label">총 참여자</div>
+                    <div class="stat-value" id="total-users">0</div>
+                    <div class="stat-unit">명</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">총 스탬프</div>
+                    <div class="stat-value" id="total-stamps">0</div>
+                    <div class="stat-unit">개</div>
+                </div>
+                <div class="stat-box" style="grid-column:span 2">
+                    <div class="stat-label">이벤트 완료</div>
+                    <div class="stat-value" id="total-events" style="font-size:28px">0</div>
+                    <div class="stat-unit">건</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 인기 부스 랭킹 -->
+        <div class="card ranking-card">
+            <div class="card-title">🏆 인기 부스 실시간 랭킹</div>
+            <div id="booth-ranking">
+                <div class="no-data">스캔 데이터를 기다리는 중...</div>
+            </div>
+        </div>
+
+        <!-- 스탬프 달성 현황 -->
+        <div class="card tier-card">
+            <div class="card-title">스탬프 달성 현황</div>
+            <div class="tier-list">
+                <div class="tier-row">
+                    <span class="tier-icon">🥉</span>
+                    <div class="tier-info">
+                        <div class="tier-name">동메달 (3개 달성)</div>
+                        <div class="tier-val bronze" id="tier-bronze">0</div>
+                    </div>
+                    <span class="tier-unit">명</span>
+                </div>
+                <div class="tier-row">
+                    <span class="tier-icon">🥈</span>
+                    <div class="tier-info">
+                        <div class="tier-name">은메달 (6개 달성)</div>
+                        <div class="tier-val silver" id="tier-silver">0</div>
+                    </div>
+                    <span class="tier-unit">명</span>
+                </div>
+                <div class="tier-row">
+                    <span class="tier-icon">🥇</span>
+                    <div class="tier-info">
+                        <div class="tier-name">금메달 (9개 달성)</div>
+                        <div class="tier-val gold" id="tier-gold">0</div>
+                    </div>
+                    <span class="tier-unit">명</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 참여 대상 분포 -->
+        <div class="card target-card">
+            <div class="card-title">참여 대상 분포</div>
+            <div id="target-chart">
+                <div class="no-data">데이터를 기다리는 중...</div>
+            </div>
+        </div>
+
+        <!-- AI 인지도 (사전 설문) -->
+        <div class="card pre-card">
+            <div class="card-title">🧠 AI·에듀테크 사전 인지도</div>
+            <div id="pre-chart">
+                <div class="no-data">데이터를 기다리는 중...</div>
+            </div>
+        </div>
+
+    </div>
+
+</body>
+</html>
