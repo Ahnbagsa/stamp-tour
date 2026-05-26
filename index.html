@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>박람회 스탬프 투어</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
+        import { getFirestore, collection, addDoc, doc, updateDoc, query, where, getDocs } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyDRS1hoA3dGERshLikDkspfNp5GT10iyF0",
+            authDomain: "stamp-tour-a6ba6.firebaseapp.com",
+            projectId: "stamp-tour-a6ba6",
+            storageBucket: "stamp-tour-a6ba6.firebasestorage.app",
+            messagingSenderId: "646092817201",
+            appId: "1:646092817201:web:1130dd162e6f8e32eaa610"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        // ─────────────────────────────────────
+        // 상태 변수
+        // ─────────────────────────────────────
+        let myStamps = [];          // 스캔한 일반 부스 코드 목록
+        let myEvents = {};          // { 'EVENT-BRONZE': true } 이벤트 완료 여부
+        let currentUserId = null;
+        let surveyDone = {};        // { 3: true } 설문 완료 여부
+        let html5Qrcode = null;
+        let isScanning = false;
+        let allowedBooths = {};     // Firebase에서 불러온 허용 부스 { code: { name, type } }
+        let currentScanMode = 'booth';
+        let postSurveys = {};       // { 'post-bronze': {...}, 'post-silver': {...}, 'post-gold': {...} }
+
+        // ─────────────────────────────────────
+        // 앱 시작: Firebase에서 허용 부스 목록 불러오기
+        // ─────────────────────────────────────
+        async function loadBooths() {
+            try {
+                const snapshot = await getDocs(collection(db, 'booths'));
+                snapshot.forEach(d => {
+                    const data = d.data();
+                    allowedBooths[data.code] = { name: data.name, type: data.type };
+                });
+                console.log('부스 목록 로드 완료:', Object.keys(allowedBooths));
+            } catch(e) {
+                console.error('부스 목록 로드 실패:', e);
+            }
+        }
+
+        // ─────────────────────────────────────
+        // 앱 시작: Firebase에서 설문 문항 불러와서 렌더링
+        // ─────────────────────────────────────
+        async function loadSurveys() {
+            try {
+                const snapshot = await getDocs(collection(db, 'surveys'));
+                snapshot.forEach(d => {
+                    const data = d.data();
+                    if (data.type === 'pre') renderPreSurveyQuestions(data.questions || []);
+                    // 동/은/금 사후 설문 저장
+                    if (['post-bronze','post-silver','post-gold'].includes(data.type)) {
+                        postSurveys[data.type] = data.questions || [];
+                    }
+                });
+            } catch(e) {
+                console.error('설문 불러오기 실패:', e);
+            }
+        }
+
+        // 사전 설문 - 참여 목적 문항을 Firebase에서 동적으로 렌더링
+        function renderPreSurveyQuestions(questions) {
+            const container = document.getElementById('dynamic-pre-questions');
+            if (!container || questions.length === 0) return;
+            container.innerHTML = questions.map((q, qi) => `
+                <div class="mb-5">
+                    <label class="block text-sm font-bold text-gray-700 mb-2">Q${qi+1}. ${q.text} *</label>
+                    <div class="flex flex-col gap-2">
+                        ${(q.options || []).map(opt => `
+                            <button class="dynamic-q${qi}-btn unselected-btn rounded-lg py-2 px-3 text-sm text-left"
+                                data-qindex="${qi}" data-value="${opt}"
+                                onclick="toggleDynamicOption(this, ${qi})">
+                                ${opt}
+                            </button>
+                        `).join('')}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // 동적 문항 토글 (복수 선택)
+        window.toggleDynamicOption = function(el, qIndex) {
+            el.classList.toggle('selected-btn');
+            el.classList.toggle('unselected-btn');
+        }
+
+        // 사후 설문 - Firebase에서 동적으로 렌더링
+        function renderPostSurveyQuestions(questions) {
+            const container = document.getElementById('dynamic-post-questions');
+            const defaultWrap = document.getElementById('default-satisfaction-wrap');
+            if (!container) return;
+
+            // 항상 초기화 (이전 티어 문항 제거)
+            container.innerHTML = '';
+
+            // 기본 만족도 라디오 초기화
+            document.querySelectorAll('input[name="satisfaction"]').forEach(el => el.checked = false);
+
+            if (questions.length === 0) {
+                // 동적 문항 없음 → 기본 만족도 표시
+                if (defaultWrap) defaultWrap.style.display = 'block';
+                return;
+            }
+
+            // 동적 문항 렌더링
+            container.innerHTML = questions.map((q, qi) => `
+                <div class="mb-5 bg-yellow-50 p-4 rounded-xl">
+                    <p class="font-bold text-gray-700 mb-3">Q${qi+1}. ${q.text} *</p>
+                    ${(q.options || []).map(opt => `
+                        <label class="flex items-center gap-2 mb-2">
+                            <input type="radio" name="dynamic-q${qi}" value="${opt}"> ${opt}
+                        </label>
+                    `).join('')}
+                </div>
+            `).join('');
+
+            // 동적 문항 있으면 기본 만족도 숨김
+            if (defaultWrap) defaultWrap.style.display = 'none';
+        }
+
+        // ─────────────────────────────────────
+        // 화면 전환
+        // ─────────────────────────────────────
+        function showScreen(screenId) {
+            document.querySelectorAll('.screen').forEach(el => el.style.display = 'none');
+            document.getElementById(screenId).style.display = 'block';
+        }
+
+        // ─────────────────────────────────────
+        // 참여 대상 — 단일 선택
+        // ─────────────────────────────────────
+        window.selectTarget = function(el) {
+            document.querySelectorAll('.target-btn').forEach(b => {
+                b.classList.remove('selected-btn');
+                b.classList.add('unselected-btn');
+            });
+            el.classList.remove('unselected-btn');
+            el.classList.add('selected-btn');
+        }
+
+        // ─────────────────────────────────────
+        // 참여 목적 — 복수 선택 토글
+        // ─────────────────────────────────────
+        window.togglePurpose = function(el) {
+            el.classList.toggle('selected-btn');
+            el.classList.toggle('unselected-btn');
+        }
+
+        // ─────────────────────────────────────
+        // 닉네임으로 기존 사용자 조회
+        // ─────────────────────────────────────
+        async function findUserByNickname(nickname) {
+            const q = query(collection(db, 'users'), where('nickname', '==', nickname));
+            const snapshot = await getDocs(q);
+            if (!snapshot.empty) {
+                const docSnap = snapshot.docs[0];
+                return { id: docSnap.id, ...docSnap.data() };
+            }
+            return null;
+        }
+
+        // ─────────────────────────────────────
+        // 사전 설문 제출 (신규 사용자)
+        // ─────────────────────────────────────
+        window.submitPreSurvey = async function() {
+            const nickname = document.getElementById('input-nickname').value.trim();
+            const targetEl = document.querySelector('.target-btn.selected-btn');
+            const purposeEls = document.querySelectorAll('.purpose-btn.selected-btn');
+
+            if (!nickname) { alert('닉네임을 입력해주세요.'); return; }
+            if (!targetEl) { alert('참여 대상을 선택해주세요.'); return; }
+            if (purposeEls.length === 0) { alert('참여 목적을 하나 이상 선택해주세요.'); return; }
+
+            const submitBtn = document.getElementById('btn-submit-survey');
+            submitBtn.disabled = true;
+            submitBtn.innerText = '확인 중...';
+
+            try {
+                const existing = await findUserByNickname(nickname);
+                if (existing) {
+                    alert('⚠️ 이미 사용 중인 닉네임입니다.\n다른 닉네임을 입력해주세요.');
+                    submitBtn.disabled = false;
+                    submitBtn.innerText = '설문 제출하고 스탬프 투어 시작 →';
+                    return;
+                }
+
+                const purposes = Array.from(purposeEls).map(el => el.dataset.value);
+
+                // 동적 설문 문항 응답 수집
+                const dynamicAnswers = {};
+                document.querySelectorAll('[class*="dynamic-q"]').forEach(el => {
+                    if (el.classList.contains('selected-btn')) {
+                        const qIndex = el.dataset.qindex;
+                        if (!dynamicAnswers[qIndex]) dynamicAnswers[qIndex] = [];
+                        dynamicAnswers[qIndex].push(el.dataset.value);
+                    }
+                });
+
+                const userRef = await addDoc(collection(db, 'users'), {
+                    nickname: nickname,
+                    target: targetEl.dataset.value,
+                    purposes: purposes,
+                    pre_answers: dynamicAnswers,
+                    stamps: [],
+                    events: {},
+                    created_at: new Date()
+                });
+                currentUserId = userRef.id;
+                myStamps = [];
+                myEvents = {};
+                enterMainScreen();
+
+            } catch (e) {
+                alert('저장 중 오류가 발생했습니다. 다시 시도해주세요.');
+                console.error(e);
+                submitBtn.disabled = false;
+                submitBtn.innerText = '설문 제출하고 스탬프 투어 시작 →';
+            }
+        }
+
+        // ─────────────────────────────────────
+        // 닉네임으로 복귀 (기존 사용자)
+        // ─────────────────────────────────────
+        window.resumeByNickname = async function() {
+            const nickname = document.getElementById('input-resume-nickname').value.trim();
+            if (!nickname) { alert('닉네임을 입력해주세요.'); return; }
+
+            const resumeBtn = document.getElementById('btn-resume');
+            resumeBtn.disabled = true;
+            resumeBtn.innerText = '조회 중...';
+
+            try {
+                const existing = await findUserByNickname(nickname);
+                if (!existing) {
+                    alert('❌ 등록된 닉네임이 없습니다.\n닉네임을 확인하거나 신규 등록해주세요.');
+                    resumeBtn.disabled = false;
+                    resumeBtn.innerText = '🔍 닉네임으로 이어하기';
+                    return;
+                }
+
+                currentUserId = existing.id;
+                myStamps = existing.stamps || [];
+                myEvents = existing.events || {};
+                enterMainScreen();
+
+            } catch (e) {
+                alert('조회 중 오류가 발생했습니다.');
+                console.error(e);
+                resumeBtn.disabled = false;
+                resumeBtn.innerText = '🔍 닉네임으로 이어하기';
+            }
+        }
+
+        // ─────────────────────────────────────
+        // 메인 화면 진입 (신규/복귀 공통)
+        // ─────────────────────────────────────
+        function enterMainScreen() {
+            updateUI();
+            renderStampList();
+            showScreen('screen-main');
+        }
+
+        // ─────────────────────────────────────
+        // UI 업데이트 (스탬프 수 + 리워드 버튼 + 이벤트 완료 표시)
+        // ─────────────────────────────────────
+        function updateUI() {
+            const count = myStamps.length;
+            document.getElementById('stamp-count').innerText = count;
+
+            // 동상 버튼 (3개)
+            const btn3 = document.getElementById('btn-tier-3');
+            if (count >= 3) {
+                btn3.disabled = false;
+                if (myEvents['EVENT-BRONZE']) {
+                    // 이벤트 완료 표시
+                    btn3.className = "w-full bg-gray-100 text-gray-400 font-bold py-3 rounded-lg mt-2 cursor-not-allowed";
+                    btn3.innerHTML = '<span style="text-decoration:line-through;">🥉 동상 이벤트 부스 참여하기</span> ✅ 완료';
+                    btn3.disabled = true;
+                } else {
+                    btn3.className = "w-full bg-green-500 text-white font-bold py-3 rounded-lg shadow mt-2";
+                    btn3.innerHTML = '🥉 동상 이벤트 부스 참여하기';
+                }
+            }
+
+            // 은상 버튼 (6개)
+            const btn6 = document.getElementById('btn-tier-6');
+            if (count >= 6) {
+                btn6.disabled = false;
+                if (myEvents['EVENT-SILVER']) {
+                    btn6.className = "w-full bg-gray-100 text-gray-400 font-bold py-3 rounded-lg mt-2 cursor-not-allowed";
+                    btn6.innerHTML = '<span style="text-decoration:line-through;">🥈 은상 이벤트 부스 참여하기</span> ✅ 완료';
+                    btn6.disabled = true;
+                } else {
+                    btn6.className = "w-full bg-blue-500 text-white font-bold py-3 rounded-lg shadow mt-2";
+                    btn6.innerHTML = '🥈 은상 이벤트 부스 참여하기';
+                }
+            }
+
+            // 금상 버튼 (9개)
+            const btn9 = document.getElementById('btn-tier-9');
+            if (count >= 9) {
+                btn9.disabled = false;
+                if (myEvents['EVENT-GOLD']) {
+                    btn9.className = "w-full bg-gray-100 text-gray-400 font-bold py-3 rounded-lg mt-2 cursor-not-allowed";
+                    btn9.innerHTML = '<span style="text-decoration:line-through;">🥇 금상 이벤트 부스 참여하기</span> ✅ 완료';
+                    btn9.disabled = true;
+                } else {
+                    btn9.className = "w-full bg-purple-600 text-white font-bold py-3 rounded-lg shadow mt-2";
+                    btn9.innerHTML = '🥇 금상 이벤트 부스 참여하기';
+                }
+            }
+        }
+
+        // ─────────────────────────────────────
+        // 참여 부스 목록 렌더링
+        // ─────────────────────────────────────
+        function renderStampList() {
+            const container = document.getElementById('stamp-list');
+            if (myStamps.length === 0) {
+                container.innerHTML = '<p class="text-gray-400 text-sm text-center py-2">아직 스캔한 부스가 없습니다.</p>';
+                return;
+            }
+            container.innerHTML = myStamps.map((code, index) => {
+                const boothName = allowedBooths[code] ? allowedBooths[code].name : code;
+                return `<div class="flex items-center gap-3 bg-indigo-50 rounded-lg px-3 py-2">
+                    <span class="w-6 h-6 bg-indigo-500 text-white text-xs font-bold rounded-full flex items-center justify-center flex-shrink-0">${index + 1}</span>
+                    <span class="text-indigo-800 font-medium text-sm">${boothName}</span>
+                    <span class="ml-auto text-green-500 text-sm">✅</span>
+                </div>`;
+            }).join('');
+        }
+
+        // ─────────────────────────────────────
+        // 스캐너 완전 종료 헬퍼
+        // ─────────────────────────────────────
+        async function stopScanner() {
+            if (html5Qrcode) {
+                try { await html5Qrcode.stop(); } catch(e) {}
+                try { html5Qrcode.clear(); } catch(e) {}
+                html5Qrcode = null;
+            }
+            document.getElementById('reader').style.display = 'none';
+            document.getElementById('reader').innerHTML = '';
+            isScanning = false;
+        }
+
+        // ─────────────────────────────────────
+        // QR 스캔 성공 처리
+        // ─────────────────────────────────────
+        async function onScanSuccess(decodedText) {
+            if (!isScanning) return;
+            isScanning = false;
+
+            // ── 허용된 QR인지 검증 ──
+            if (!allowedBooths[decodedText]) {
+                alert('❌ 등록되지 않은 QR코드입니다.\n올바른 부스 QR코드를 스캔해주세요.');
+                await stopScanner();
+                document.getElementById('btn-start-scan').style.display = 'flex';
+                return;
+            }
+
+            const boothInfo = allowedBooths[decodedText];
+
+            // ── 이벤트 부스 QR 처리 ──
+            if (boothInfo.type === 'event') {
+                // 현재 스캔 모드와 일치하는 이벤트 코드인지 확인
+                const expectedCode = {
+                    'bronze': 'EVENT-BRONZE',
+                    'silver': 'EVENT-SILVER',
+                    'gold':   'EVENT-GOLD'
+                }[currentScanMode.replace('event-', '')];
+
+                if (decodedText !== expectedCode) {
+                    alert(`⚠️ 다른 이벤트 부스 QR입니다.\n해당 이벤트 부스 운영자의 QR을 스캔해주세요.`);
+                    await stopScanner();
+                    showScreen('screen-main');
+                    return;
+                }
+
+                if (myEvents[decodedText]) {
+                    alert('이미 완료한 이벤트입니다!');
+                    await stopScanner();
+                    showScreen('screen-main');
+                    return;
+                }
+
+                // 이벤트 완료 처리
+                myEvents[decodedText] = true;
+                await stopScanner();
+
+                try {
+                    await updateDoc(doc(db, 'users', currentUserId), { events: myEvents });
+                    await addDoc(collection(db, 'eventLogs'), {
+                        user_id: currentUserId,
+                        event_code: decodedText,
+                        event_name: boothInfo.name,
+                        completed_at: new Date()
+                    });
+                } catch(e) { console.error('이벤트 저장 실패:', e); }
+
+                updateUI();
+                showScreen('screen-main');
+                alert(`🎉 ${boothInfo.name} 참여 완료!`);
+                return;
+            }
+
+            // ── 일반 부스 QR 처리 ──
+            if (currentScanMode !== 'booth') {
+                alert('⚠️ 지금은 이벤트 부스 QR을 스캔해야 합니다.');
+                await stopScanner();
+                showScreen('screen-main');
+                return;
+            }
+
+            if (myStamps.includes(decodedText)) {
+                alert('⚠️ 이미 참여한 부스입니다!\n다른 부스 체험 후 다시 스캔해주세요.');
+                await stopScanner();
+                document.getElementById('btn-start-scan').style.display = 'flex';
+                document.getElementById('btn-start-scan').innerText = '📷 다음 QR 스캔하기';
+                return;
+            }
+
+            // 스탬프 적립
+            await stopScanner();
+            document.getElementById('btn-start-scan').style.display = 'flex';
+            document.getElementById('btn-start-scan').innerText = '📷 다음 QR 스캔하기';
+
+            myStamps.push(decodedText);
+            updateUI();
+            renderStampList();
+            alert(`🎉 ${boothInfo.name} 스탬프 적립!`);
+
+            try {
+                await addDoc(collection(db, 'stampLogs'), {
+                    user_id: currentUserId,
+                    booth_code: decodedText,
+                    booth_name: boothInfo.name,
+                    scanned_at: new Date()
+                });
+                await updateDoc(doc(db, 'users', currentUserId), { stamps: myStamps });
+            } catch(e) { console.error('DB 저장 실패:', e); }
+        }
+
+        // ─────────────────────────────────────
+        // QR 스캐너 시작
+        // ─────────────────────────────────────
+        async function startScannerWithMode(mode) {
+            currentScanMode = mode;
+            document.getElementById('reader').style.display = 'block';
+            document.getElementById('btn-start-scan').style.display = 'none';
+
+            if (html5Qrcode) {
+                try { await html5Qrcode.stop(); } catch(e) {}
+                try { html5Qrcode.clear(); } catch(e) {}
+                html5Qrcode = null;
+            }
+            document.getElementById('reader').innerHTML = '';
+            html5Qrcode = new Html5Qrcode("reader");
+            isScanning = true;
+
+            try {
+                await html5Qrcode.start(
+                    { facingMode: "environment" },
+                    { fps: 10, qrbox: { width: 250, height: 250 }, aspectRatio: 1.0 },
+                    onScanSuccess
+                );
+            } catch (err) {
+                console.error('카메라 시작 실패:', err);
+                alert('카메라를 시작할 수 없습니다.\nHTTPS 환경(Netlify)에서 실행해주세요.');
+                document.getElementById('reader').style.display = 'none';
+                document.getElementById('btn-start-scan').style.display = 'flex';
+                isScanning = false;
+            }
+        }
+
+        // 일반 QR 스캔 버튼
+        window.startScanner = function() { startScannerWithMode('booth'); }
+
+        // ─────────────────────────────────────
+        // 리워드 버튼 클릭 → 설문 화면
+        // ─────────────────────────────────────
+        window.openRewardSurvey = function(tier) {
+            if (surveyDone[tier]) {
+                const modeMap = { 3: 'event-bronze', 6: 'event-silver', 9: 'event-gold' };
+                const eventCode = { 3: 'EVENT-BRONZE', 6: 'EVENT-SILVER', 9: 'EVENT-GOLD' }[tier];
+                if (myEvents[eventCode]) {
+                    alert('이미 완료된 이벤트입니다!');
+                    return;
+                }
+                alert('이벤트 부스 운영자의 QR코드를 스캔해주세요!');
+                startScannerWithMode(modeMap[tier]);
+                return;
+            }
+
+            // 티어별 설문 문항 렌더링
+            const surveyKey = { 3: 'post-bronze', 6: 'post-silver', 9: 'post-gold' }[tier];
+            const tierLabel = { 3: '🥉 동상', 6: '🥈 은상', 9: '🥇 금상' }[tier];
+
+            document.getElementById('survey-tier').value = tier;
+            document.getElementById('survey-tier-label').innerText = tierLabel;
+
+            // 해당 티어 동적 문항 렌더링
+            const questions = postSurveys[surveyKey] || [];
+            renderPostSurveyQuestions(questions);
+
+            showScreen('screen-survey');
+        }
+
+        // ─────────────────────────────────────
+        // 사후 설문 제출 → 이벤트 QR 스캔으로 연결
+        // ─────────────────────────────────────
+        window.submitPostSurvey = async function() {
+            const tier = parseInt(document.getElementById('survey-tier').value);
+            const comment = document.getElementById('input-comment').value.trim();
+
+            // 동적 사후 설문 응답 수집
+            const dynamicAnswers = {};
+            let hasAnswer = false;
+            document.querySelectorAll('[name^="dynamic-q"]:checked').forEach(el => {
+                const qName = el.getAttribute('name');
+                dynamicAnswers[qName] = el.value;
+                hasAnswer = true;
+            });
+
+            // 하드코딩 만족도 체크 (하위 호환)
+            const satisfactionEl = document.querySelector('input[name="satisfaction"]:checked');
+
+            // 동적 문항이 있으면 동적 문항 체크, 없으면 기존 만족도 체크
+            const dynamicContainer = document.getElementById('dynamic-post-questions');
+            const hasDynamicQ = dynamicContainer && dynamicContainer.innerHTML.trim() !== '';
+            if (hasDynamicQ && !hasAnswer) { alert('설문 문항에 답해주세요.'); return; }
+            if (!hasDynamicQ && !satisfactionEl) { alert('만족도를 선택해주세요.'); return; }
+
+            try {
+                await addDoc(collection(db, 'postSurveys'), {
+                    user_id: currentUserId,
+                    tier: tier,
+                    satisfaction: satisfactionEl ? satisfactionEl.value : null,
+                    dynamic_answers: dynamicAnswers,
+                    comment: comment,
+                    submitted_at: new Date()
+                });
+                surveyDone[tier] = true;
+
+                // 설문 완료 후 바로 이벤트 부스 QR 스캔 안내
+                const modeMap = { 3: 'event-bronze', 6: 'event-silver', 9: 'event-gold' };
+                showScreen('screen-main');
+                alert('✅ 설문 완료!\n이제 이벤트 부스 운영자의 QR코드를 스캔해주세요.');
+                startScannerWithMode(modeMap[tier]);
+
+            } catch (e) {
+                alert('저장 오류가 발생했습니다.');
+                console.error(e);
+            }
+        }
+
+        window.goBackToMain = function() { showScreen('screen-main'); }
+
+        // ─────────────────────────────────────
+        // 앱 초기화
+        // ─────────────────────────────────────
+        async function init() {
+            await loadBooths();
+            await loadSurveys();
+            showScreen('screen-pre-survey');
+        }
+        init();
+
+    </script>
+
+    <style>
+        /* 모든 화면 기본 숨김 — JS에서 showScreen()으로 제어 */
+        .screen { display: none; }
+        .selected-btn {
+            border: 2px solid #3730a3;
+            background-color: #eef2ff;
+            color: #3730a3;
+            font-weight: 600;
+        }
+        .unselected-btn {
+            border: 1px solid #d1d5db;
+            background-color: #f9fafb;
+            color: #6b7280;
+        }
+    </style>
+</head>
+
+<body class="bg-gray-100 flex flex-col items-center min-h-screen p-4">
+
+    <!-- ══════════════════════════════════════════ -->
+    <!-- [화면A] 사전 설문                           -->
+    <!-- ══════════════════════════════════════════ -->
+    <div id="screen-pre-survey" class="screen bg-white p-6 rounded-2xl shadow-lg w-full max-w-md mt-4">
+        <h1 class="text-2xl font-bold text-center text-gray-800 mb-1">🎪 박람회 스탬프 투어</h1>
+
+        <!-- 기존 사용자 복귀 -->
+        <div class="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-6">
+            <p class="text-sm font-bold text-blue-700 mb-2">📲 이전에 등록하셨나요?</p>
+            <p class="text-xs text-blue-500 mb-3">닉네임을 입력하면 이어서 스탬프를 모을 수 있어요.</p>
+            <div class="flex gap-2">
+                <input id="input-resume-nickname" type="text" placeholder="기존 닉네임 입력"
+                    class="flex-1 border border-blue-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+                <button id="btn-resume" onclick="resumeByNickname()"
+                    class="bg-blue-500 hover:bg-blue-600 text-white font-bold px-4 py-2 rounded-lg text-sm whitespace-nowrap">
+                    🔍 이어하기
+                </button>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-3 mb-6">
+            <hr class="flex-1 border-gray-200">
+            <span class="text-xs text-gray-400 whitespace-nowrap">처음 오셨나요? 아래에서 등록하세요</span>
+            <hr class="flex-1 border-gray-200">
+        </div>
+
+        <p class="text-center text-gray-500 text-sm mb-5">스탬프 투어 시작 전 간단히 답해주세요</p>
+
+        <!-- 닉네임 -->
+        <div class="mb-5">
+            <label class="block text-sm font-bold text-gray-700 mb-1">닉네임 *</label>
+            <input id="input-nickname" type="text" placeholder="예) 행복한참새, 별이빛나는밤"
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-400">
+            <p class="text-xs text-gray-400 mt-1">다른 사람과 겹치지 않는 닉네임을 사용해주세요</p>
+        </div>
+
+        <!-- 참여 대상 -->
+        <div class="mb-5">
+            <label class="block text-sm font-bold text-gray-700 mb-2">참여 대상 *</label>
+            <div class="grid grid-cols-2 gap-2">
+                <button class="target-btn unselected-btn rounded-lg py-2 px-3 text-sm" data-value="학생" onclick="selectTarget(this)">🎓 학생</button>
+                <button class="target-btn unselected-btn rounded-lg py-2 px-3 text-sm" data-value="학부모" onclick="selectTarget(this)">👨‍👩‍👧 학부모</button>
+                <button class="target-btn unselected-btn rounded-lg py-2 px-3 text-sm" data-value="교직원" onclick="selectTarget(this)">🏫 교직원</button>
+                <button class="target-btn unselected-btn rounded-lg py-2 px-3 text-sm" data-value="지역주민" onclick="selectTarget(this)">🏘️ 지역주민</button>
+                <button class="target-btn unselected-btn rounded-lg py-2 px-3 text-sm col-span-2" data-value="기타" onclick="selectTarget(this)">기타</button>
+            </div>
+        </div>
+
+        <!-- 참여 목적 (하드코딩 유지 - 기본값) -->
+        <div class="mb-6">
+            <label class="block text-sm font-bold text-gray-700 mb-1">참여 목적 * <span class="font-normal text-gray-400">(복수 선택 가능)</span></label>
+            <div class="flex flex-col gap-2 mt-2">
+                <button class="purpose-btn unselected-btn rounded-lg py-2 px-3 text-sm text-left" data-value="진로·교육 정보 수집" onclick="togglePurpose(this)">📚 진로·교육 정보 수집</button>
+                <button class="purpose-btn unselected-btn rounded-lg py-2 px-3 text-sm text-left" data-value="기관·단체 프로그램 탐색" onclick="togglePurpose(this)">🏫 기관·단체 프로그램 탐색</button>
+                <button class="purpose-btn unselected-btn rounded-lg py-2 px-3 text-sm text-left" data-value="네트워킹 및 교류" onclick="togglePurpose(this)">🤝 네트워킹 및 교류</button>
+                <button class="purpose-btn unselected-btn rounded-lg py-2 px-3 text-sm text-left" data-value="지역사회 행사 참여" onclick="togglePurpose(this)">🌱 지역사회 행사 참여</button>
+                <button class="purpose-btn unselected-btn rounded-lg py-2 px-3 text-sm text-left" data-value="기타" onclick="togglePurpose(this)">기타</button>
+            </div>
+        </div>
+
+        <!-- 관리자가 추가한 동적 문항 영역 -->
+        <div id="dynamic-pre-questions"></div>
+
+        <div class="bg-gray-50 rounded-lg p-3 mb-5 text-xs text-gray-400 leading-relaxed">
+            위 정보는 박람회 운영 통계 목적으로만 활용되며, 행사 종료 후 파기됩니다.
+        </div>
+
+        <button id="btn-submit-survey" onclick="submitPreSurvey()"
+            class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 rounded-xl">
+            설문 제출하고 스탬프 투어 시작 →
+        </button>
+    </div>
+
+
+    <!-- ══════════════════════════════════ -->
+    <!-- [화면B] 메인 스탬프 투어             -->
+    <!-- ══════════════════════════════════ -->
+    <div id="screen-main" class="screen bg-white p-6 rounded-2xl shadow-lg w-full max-w-md mt-4">
+        <h1 class="text-2xl font-bold text-center text-gray-800 mb-2">🎪 스탬프 Tour</h1>
+
+        <div class="bg-indigo-50 text-indigo-800 p-4 rounded-xl text-center font-bold text-lg mb-4">
+            현재 모은 스탬프: <span id="stamp-count" class="text-3xl text-indigo-600">0</span> 개
+        </div>
+
+        <!-- QR 리더 영역 -->
+        <div id="reader" style="display:none; width:100%;" class="mb-4 rounded-xl overflow-hidden border-2 border-gray-200"></div>
+
+        <!-- QR 스캔 버튼 -->
+        <button id="btn-start-scan" onclick="startScanner()"
+            class="w-full bg-gray-800 hover:bg-gray-900 text-white font-bold py-4 rounded-xl mb-4 flex justify-center gap-2">
+            📷 QR 카메라 켜기
+        </button>
+
+        <!-- 참여 부스 목록 -->
+        <div class="mb-6">
+            <h2 class="font-bold text-gray-600 mb-2">📋 참여한 부스</h2>
+            <div id="stamp-list" class="flex flex-col gap-2">
+                <p class="text-gray-400 text-sm text-center py-2">아직 스캔한 부스가 없습니다.</p>
+            </div>
+        </div>
+
+        <hr class="mb-4">
+
+        <!-- 리워드 버튼 -->
+        <h2 class="font-bold text-gray-600 mb-2">🎁 리워드 교환</h2>
+        <button id="btn-tier-3" disabled onclick="openRewardSurvey(3)"
+            class="w-full bg-gray-200 text-gray-400 font-bold py-3 rounded-lg mt-2 cursor-not-allowed">
+            🔒 동상 부스 (스탬프 3개 필요)
+        </button>
+        <button id="btn-tier-6" disabled onclick="openRewardSurvey(6)"
+            class="w-full bg-gray-200 text-gray-400 font-bold py-3 rounded-lg mt-2 cursor-not-allowed">
+            🔒 은상 부스 (스탬프 6개 필요)
+        </button>
+        <button id="btn-tier-9" disabled onclick="openRewardSurvey(9)"
+            class="w-full bg-gray-200 text-gray-400 font-bold py-3 rounded-lg mt-2 cursor-not-allowed">
+            🔒 금상 부스 (스탬프 9개 필요)
+        </button>
+    </div>
+
+
+    <!-- ══════════════════════════════════ -->
+    <!-- [화면C] 사후 만족도 설문             -->
+    <!-- ══════════════════════════════════ -->
+    <div id="screen-survey" class="screen bg-white p-6 rounded-2xl shadow-lg w-full max-w-md mt-4">
+        <input type="hidden" id="survey-tier" value="">
+
+        <h2 class="text-xl font-bold text-center text-gray-800 mb-1">
+            <span id="survey-tier-label"></span> 리워드 설문
+        </h2>
+        <p class="text-center text-gray-500 text-sm mb-6">설문 완료 후 이벤트 부스 QR을 스캔해주세요</p>
+
+        <!-- 관리자가 설정한 동적 사후 설문 문항 (있으면 이쪽이 우선) -->
+        <div id="dynamic-post-questions"></div>
+
+        <!-- 기본 만족도 (동적 문항 없을 때 표시) -->
+        <div id="default-satisfaction-wrap" class="mb-6 bg-yellow-50 p-4 rounded-xl">
+            <p class="font-bold text-gray-700 mb-3">Q. 전반적인 박람회 만족도는? *</p>
+            <label class="flex items-center gap-2 mb-2"><input type="radio" name="satisfaction" value="매우만족"> ⭐⭐⭐⭐⭐ 매우 만족</label>
+            <label class="flex items-center gap-2 mb-2"><input type="radio" name="satisfaction" value="만족"> ⭐⭐⭐⭐ 만족</label>
+            <label class="flex items-center gap-2 mb-2"><input type="radio" name="satisfaction" value="보통"> ⭐⭐⭐ 보통</label>
+            <label class="flex items-center gap-2 mb-2"><input type="radio" name="satisfaction" value="불만족"> ⭐⭐ 불만족</label>
+            <label class="flex items-center gap-2"><input type="radio" name="satisfaction" value="매우불만족"> ⭐ 매우 불만족</label>
+        </div>
+
+        <div class="mb-6">
+            <label class="block text-sm font-bold text-gray-700 mb-1">자유 의견 (선택)</label>
+            <textarea id="input-comment" rows="3" placeholder="개선사항이나 좋았던 점을 적어주세요"
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-yellow-400"></textarea>
+        </div>
+
+        <button onclick="submitPostSurvey()"
+            class="w-full bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-4 rounded-xl mb-3">
+            ✅ 설문 제출 → 이벤트 부스 QR 스캔하기
+        </button>
+        <button onclick="goBackToMain()"
+            class="w-full bg-gray-200 text-gray-600 font-bold py-3 rounded-xl">
+            ← 돌아가기
+        </button>
+    </div>
+
+</body>
+</html>
