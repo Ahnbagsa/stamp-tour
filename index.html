@@ -677,10 +677,33 @@
         // ─────────────────────────────────────
         // 앱 초기화
         // ─────────────────────────────────────
+        async function loadIntro() {
+            try {
+                const snap = await getDocs(collection(db, 'settings'));
+                let intro = null;
+                snap.forEach(d => { if (d.id === 'intro') intro = d.data(); });
+
+                if (intro) {
+                    if (intro.poster) {
+                        document.getElementById('intro-poster').src = intro.poster;
+                        document.getElementById('intro-poster-wrap').style.display = 'block';
+                        document.getElementById('intro-poster-placeholder').style.display = 'none';
+                    }
+                    if (intro.title) document.getElementById('intro-title').innerText = intro.title;
+                    if (intro.message) document.getElementById('intro-message').innerHTML = intro.message.replace(/\n/g, '<br>');
+                }
+            } catch(e) { console.error('인트로 로드 실패:', e); }
+        }
+
+        window.startApp = function() {
+            showScreen('screen-pre-survey');
+        }
+
         async function init() {
             await loadBooths();
             await loadSurveys();
-            showScreen('screen-pre-survey');
+            await loadIntro();
+            showScreen('screen-intro');
         }
         init();
 
@@ -704,6 +727,36 @@
 </head>
 
 <body class="bg-gray-100 flex flex-col items-center min-h-screen p-4">
+
+    <!-- ══════════════════════════════════════════ -->
+    <!-- [화면0] 인트로 (포스터 + 시작하기)          -->
+    <!-- ══════════════════════════════════════════ -->
+    <div id="screen-intro" class="screen w-full max-w-md mt-4">
+        <div class="bg-white rounded-2xl shadow-lg overflow-hidden">
+            <!-- 포스터 영역 -->
+            <div id="intro-poster-wrap" style="display:none;">
+                <img id="intro-poster" src="" alt="박람회 포스터" style="width:100%; display:block;">
+            </div>
+            <!-- 포스터 없을 때 기본 배경 -->
+            <div id="intro-poster-placeholder" style="aspect-ratio:3/4; background:linear-gradient(160deg,#1e3a5f,#0d2137);"
+                class="flex flex-col items-center justify-center">
+                <span class="text-5xl mb-3">🎪</span>
+                <span class="text-white/50 text-sm">박람회 포스터</span>
+            </div>
+
+            <!-- 내용 -->
+            <div class="p-6">
+                <h1 id="intro-title" class="text-xl font-bold text-center text-gray-800 mb-2">에듀테크 AI 과학 교육박람회</h1>
+                <p id="intro-message" class="text-sm text-gray-500 text-center leading-relaxed mb-6">
+                    QR 스탬프 투어에 오신 것을 환영합니다!<br>부스를 방문하고 스탬프를 모아<br>다양한 리워드를 받아가세요 🎁
+                </p>
+                <button onclick="startApp()"
+                    class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 rounded-xl">
+                    시작하기 →
+                </button>
+            </div>
+        </div>
+    </div>
 
     <!-- ══════════════════════════════════════════ -->
     <!-- [화면A] 사전 설문                           -->

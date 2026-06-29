@@ -8,7 +8,7 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
-        import { getFirestore, collection, addDoc, doc, deleteDoc, updateDoc, getDocs, query, orderBy, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, doc, deleteDoc, updateDoc, setDoc, getDoc, getDocs, query, orderBy, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyDRS1hoA3dGERshLikDkspfNp5GT10iyF0",
@@ -51,6 +51,7 @@
         async function loadAll() {
             await loadBooths();
             await loadNotices();
+            await loadIntroSettings();
             await loadSurveys();
             await loadStats();
         }
@@ -89,13 +90,15 @@
                 <div class="flex items-center gap-3 bg-gray-50 rounded-lg px-3 py-2 border border-gray-200">
                     <div class="flex-1 min-w-0">
                         <span class="text-xs font-mono text-gray-400 mr-2">${b.code}</span>
-                        <span class="font-medium text-gray-800 text-sm">${b.name}</span>
+                        <span class="font-medium text-gray-800 text-sm" id="booth-name-${b.id}">${b.name}</span>
                     </div>
                     <div class="flex items-center gap-2 flex-shrink-0">
                         ${statusBadge}
+                        <button onclick="editBoothName('${b.id}', '${b.name.replace(/'/g, "\\'")}')"
+                            class="text-xs text-indigo-400 hover:text-indigo-600 px-1.5 py-1 rounded hover:bg-indigo-50" title="이름 수정">✏️</button>
                         <span class="text-xs bg-white border border-gray-200 rounded px-2 py-0.5 font-mono text-gray-500 cursor-pointer hover:bg-gray-100"
                             onclick="copyCode('${b.code}')" title="클릭하면 복사">📋</span>
-                        <button onclick="deleteBooth('${b.id}', '${b.name}')"
+                        <button onclick="deleteBooth('${b.id}', '${b.name.replace(/'/g, "\\'")}')"
                             class="text-red-400 hover:text-red-600 text-sm font-bold px-2 py-1 rounded hover:bg-red-50">🗑️</button>
                     </div>
                 </div>`;
@@ -160,6 +163,23 @@
             await deleteDoc(doc(db, 'booths', id));
             await loadBooths();
             await loadStats();
+        }
+
+        // 부스명 수정
+        window.editBoothName = async function(id, currentName) {
+            const newName = prompt('부스 이름을 수정하세요:', currentName);
+            if (newName === null) return; // 취소
+            const trimmed = newName.trim();
+            if (!trimmed) { alert('이름을 비울 수 없습니다.'); return; }
+            if (trimmed === currentName) return; // 변경 없음
+
+            try {
+                await updateDoc(doc(db, 'booths', id), { name: trimmed });
+                await loadBooths();
+                await loadStats();
+            } catch(e) {
+                alert('수정 중 오류: ' + e.message);
+            }
         }
 
         window.copyCode = function(code) {
@@ -580,6 +600,66 @@
             } catch(e) { console.error('공지 로드 실패:', e); }
         }
 
+        // ── 시작 화면(인트로) 설정 ──
+        async function loadIntroSettings() {
+            try {
+                const docSnap = await getDoc(doc(db, 'settings', 'intro'));
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    document.getElementById('intro-poster-input').value = data.poster || '';
+                    document.getElementById('intro-title-input').value = data.title || '';
+                    document.getElementById('intro-message-input').value = data.message || '';
+                }
+            } catch(e) { console.error('인트로 설정 로드 실패:', e); }
+        }
+
+        window.saveIntro = async function() {
+            const poster = document.getElementById('intro-poster-input').value.trim();
+            const title = document.getElementById('intro-title-input').value.trim();
+            const message = document.getElementById('intro-message-input').value.trim();
+
+            if (poster && !poster.startsWith('http')) {
+                alert('포스터 링크는 http로 시작하는 직접 링크여야 합니다.');
+                return;
+            }
+
+            const btn = document.getElementById('btn-save-intro');
+            btn.disabled = true; btn.innerText = '저장 중...';
+
+            try {
+                await setDoc(doc(db, 'settings', 'intro'), {
+                    poster: poster,
+                    title: title,
+                    message: message,
+                    updated_at: new Date()
+                });
+                alert('✅ 시작 화면이 저장되었습니다!\n참가자 화면에 바로 반영됩니다.');
+            } catch(e) {
+                alert('저장 중 오류: ' + e.message);
+            }
+            btn.disabled = false; btn.innerText = '💾 시작 화면 저장';
+        }
+
+        window.previewIntro = function() {
+            const poster = document.getElementById('intro-poster-input').value.trim();
+            const title = document.getElementById('intro-title-input').value.trim() || '에듀테크 AI 과학 교육박람회';
+            const message = (document.getElementById('intro-message-input').value.trim() || '환영합니다!').replace(/\n/g, '<br>');
+            const posterHtml = poster
+                ? `<img src="${poster}" style="width:100%;display:block" alt="포스터">`
+                : `<div style="aspect-ratio:3/4;background:linear-gradient(160deg,#1e3a5f,#0d2137)" class="flex items-center justify-center"><span style="font-size:48px">🎪</span></div>`;
+            const w = window.open('', '_blank', 'width=400,height=720');
+            w.document.write(`<html><head><meta charset="UTF-8"><script src="https://cdn.tailwindcss.com"><\/script></head>
+                <body style="margin:0;background:#f3f4f6;padding:16px">
+                <div style="max-width:360px;margin:0 auto;background:white;border-radius:18px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.1)">
+                ${posterHtml}
+                <div style="padding:24px">
+                    <h1 style="font-size:20px;font-weight:bold;text-align:center;margin:0 0 8px">${title}</h1>
+                    <p style="font-size:14px;color:#6b7280;text-align:center;line-height:1.6;margin:0 0 20px">${message}</p>
+                    <button style="width:100%;background:#4f46e5;color:white;font-weight:bold;padding:14px;border:none;border-radius:12px;font-size:15px">시작하기 →</button>
+                </div></div></body></html>`);
+            w.document.close();
+        }
+
         function renderNoticeList(notices) {
             const container = document.getElementById('notice-list');
             if (notices.length === 0) {
@@ -846,6 +926,37 @@
                     </button>
                 </div>
                 <p class="text-xs text-gray-400 mt-2">💡 공지사항은 4초마다 자동으로 순환 표시됩니다.</p>
+            </div>
+
+            <!-- 시작 화면(인트로) 설정 -->
+            <div class="bg-white rounded-2xl shadow p-5 mb-4">
+                <h2 class="font-bold text-gray-700 mb-1">🖼️ 시작 화면(포스터) 설정</h2>
+                <p class="text-xs text-gray-400 mb-4">참가자가 처음 접속했을 때 보이는 포스터·문구를 설정합니다. (index.html)</p>
+
+                <label class="block text-sm font-bold text-gray-700 mb-1">포스터 이미지 링크 <span class="text-xs font-normal text-gray-400">(선택)</span></label>
+                <input id="intro-poster-input" type="text" placeholder="postimages 직접 링크 붙여넣기"
+                    class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-1 focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                <p class="text-xs text-gray-400 mb-3">💡 모바일 세로 화면이므로 세로형(3:4) 포스터를 권장합니다. 예: 1080 × 1440px</p>
+
+                <label class="block text-sm font-bold text-gray-700 mb-1">제목</label>
+                <input id="intro-title-input" type="text" placeholder="에듀테크 AI 과학 교육박람회"
+                    class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-indigo-400">
+
+                <label class="block text-sm font-bold text-gray-700 mb-1">안내 문구</label>
+                <textarea id="intro-message-input" rows="3" placeholder="QR 스탬프 투어에 오신 것을 환영합니다!&#10;부스를 방문하고 스탬프를 모아 리워드를 받아가세요 🎁"
+                    class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-1 focus:outline-none focus:ring-2 focus:ring-indigo-400"></textarea>
+                <p class="text-xs text-gray-400 mb-4">💡 줄바꿈도 그대로 반영됩니다.</p>
+
+                <div class="flex gap-2">
+                    <button id="btn-save-intro" onclick="saveIntro()"
+                        class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 rounded-lg text-sm">
+                        💾 시작 화면 저장
+                    </button>
+                    <button onclick="previewIntro()"
+                        class="bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold px-4 py-2 rounded-lg text-sm">
+                        👁️ 미리보기
+                    </button>
+                </div>
             </div>
         </div>
 
