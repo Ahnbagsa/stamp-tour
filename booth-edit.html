@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>부스 설명 입력 - 운영 강사용</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
+        import { getFirestore, collection, query, where, getDocs, doc, updateDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyDRS1hoA3dGERshLikDkspfNp5GT10iyF0",
+            authDomain: "stamp-tour-a6ba6.firebaseapp.com",
+            projectId: "stamp-tour-a6ba6",
+            storageBucket: "stamp-tour-a6ba6.firebasestorage.app",
+            messagingSenderId: "646092817201",
+            appId: "1:646092817201:web:1130dd162e6f8e32eaa610"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        let currentBoothId = null;
+        let currentImages = [];
+
+        // ─────────────────────────────────────
+        // 부스 번호로 조회
+        // ─────────────────────────────────────
+        window.lookupBooth = async function() {
+            const codeInput = document.getElementById('input-code').value.trim().toUpperCase();
+            if (!codeInput) { alert('부스 번호를 입력해주세요.'); return; }
+
+            // BOOTH-07 또는 7 또는 07 입력 모두 허용
+            let code = codeInput;
+            if (!code.startsWith('BOOTH-')) {
+                const num = code.replace(/[^0-9]/g, '');
+                if (!num) { alert('올바른 부스 번호를 입력해주세요. (예: 7 또는 BOOTH-07)'); return; }
+                code = 'BOOTH-' + num.padStart(2, '0');
+            }
+
+            const btn = document.getElementById('btn-lookup');
+            btn.disabled = true; btn.innerText = '조회 중...';
+
+            try {
+                const q = query(collection(db, 'booths'), where('code', '==', code));
+                const snap = await getDocs(q);
+
+                if (snap.empty) {
+                    alert(`'${code}' 부스를 찾을 수 없습니다.\n부스 번호를 다시 확인해주세요.`);
+                    btn.disabled = false; btn.innerText = '조회';
+                    return;
+                }
+
+                const docSnap = snap.docs[0];
+                const data = docSnap.data();
+
+                if (data.type === 'event') {
+                    alert('이벤트 부스는 설명 입력 대상이 아닙니다.');
+                    btn.disabled = false; btn.innerText = '조회';
+                    return;
+                }
+
+                currentBoothId = docSnap.id;
+                currentImages = data.images || [];
+
+                // 폼 채우기
+                document.getElementById('booth-num').innerText = code.replace('BOOTH-', '').replace(/^0+/, '');
+                document.getElementById('booth-name').innerText = data.name;
+                document.getElementById('input-desc').value = data.description || '';
+                updateCharCount();
+                renderImageList();
+
+                document.getElementById('edit-form').style.display = 'block';
+                btn.disabled = false; btn.innerText = '조회';
+
+            } catch(e) {
+                alert('조회 중 오류가 발생했습니다: ' + e.message);
+                btn.disabled = false; btn.innerText = '조회';
+            }
+        }
+
+        // ─────────────────────────────────────
+        // 글자 수 카운트
+        // ─────────────────────────────────────
+        window.updateCharCount = function() {
+            const len = document.getElementById('input-desc').value.length;
+            document.getElementById('char-count').innerText = len + ' / 300자';
+        }
+
+        // ─────────────────────────────────────
+        // 이미지 추가/삭제
+        // ─────────────────────────────────────
+        window.addImage = function() {
+            const url = document.getElementById('input-image').value.trim();
+            if (!url) { alert('이미지 링크를 입력해주세요.'); return; }
+            if (!url.startsWith('http')) { alert('올바른 링크가 아닙니다. http로 시작하는 직접 링크를 붙여넣어주세요.'); return; }
+            if (currentImages.length >= 3) { alert('이미지는 최대 3장까지 등록할 수 있습니다.'); return; }
+
+            currentImages.push(url);
+            document.getElementById('input-image').value = '';
+            renderImageList();
+        }
+
+        window.removeImage = function(index) {
+            currentImages.splice(index, 1);
+            renderImageList();
+        }
+
+        function renderImageList() {
+            const container = document.getElementById('image-list');
+            if (currentImages.length === 0) {
+                container.innerHTML = '<p class="text-gray-400 text-xs text-center py-2">등록된 이미지가 없습니다. (선택사항)</p>';
+                return;
+            }
+            container.innerHTML = currentImages.map((url, i) => `
+                <div class="flex items-center gap-2 bg-gray-50 rounded-lg p-2 border border-gray-200">
+                    <img src="${url}" class="w-12 h-12 rounded object-cover flex-shrink-0" onerror="this.style.opacity=0.3" alt="미리보기">
+                    <span class="flex-1 text-xs text-gray-500 truncate">${url}</span>
+                    <button onclick="removeImage(${i})" class="text-red-400 hover:text-red-600 text-sm px-2">🗑️</button>
+                </div>
+            `).join('');
+        }
+
+        // ─────────────────────────────────────
+        // 저장
+        // ─────────────────────────────────────
+        window.saveBooth = async function() {
+            const desc = document.getElementById('input-desc').value.trim();
+            if (!desc) { alert('부스 설명을 입력해주세요.'); return; }
+            if (!currentBoothId) { alert('먼저 부스를 조회해주세요.'); return; }
+
+            const btn = document.getElementById('btn-save');
+            btn.disabled = true; btn.innerText = '저장 중...';
+
+            try {
+                await updateDoc(doc(db, 'booths', currentBoothId), {
+                    description: desc,
+                    images: currentImages
+                });
+                alert('✅ 저장되었습니다!\n참가자 화면에 바로 반영됩니다.');
+            } catch(e) {
+                alert('저장 중 오류가 발생했습니다: ' + e.message);
+            }
+
+            btn.disabled = false; btn.innerText = '💾 저장하기';
+        }
+
+        // Enter 키로 조회
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('input-code').addEventListener('keydown', e => {
+                if (e.key === 'Enter') window.lookupBooth();
+            });
+        });
+    </script>
+</head>
+
+<body class="bg-gray-100 flex flex-col items-center min-h-screen p-4">
+
+    <div class="w-full max-w-md mt-4">
+
+        <!-- 헤더 -->
+        <div class="text-center mb-5">
+            <h1 class="text-xl font-bold text-gray-800">🏫 부스 설명 입력</h1>
+            <p class="text-sm text-gray-500 mt-1">운영 강사 전용 페이지</p>
+        </div>
+
+        <!-- 부스 번호 입력 -->
+        <div class="bg-indigo-50 rounded-xl p-4 mb-4">
+            <p class="text-sm font-bold text-indigo-700 mb-2">먼저 본인 부스 번호를 입력하세요</p>
+            <div class="flex gap-2">
+                <input id="input-code" type="text" placeholder="예) 7 또는 BOOTH-07"
+                    class="flex-1 border border-indigo-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                <button id="btn-lookup" onclick="lookupBooth()"
+                    class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-5 py-2 rounded-lg text-sm whitespace-nowrap">
+                    조회
+                </button>
+            </div>
+            <p class="text-xs text-indigo-400 mt-2">💡 부스 번호는 운영 담당 선생님께 문의하세요.</p>
+        </div>
+
+        <!-- 편집 폼 (조회 후 표시) -->
+        <div id="edit-form" style="display:none;" class="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
+
+            <!-- 부스 정보 -->
+            <div class="flex items-center gap-2 mb-4 pb-3 border-b border-gray-100">
+                <span class="w-7 h-7 rounded-full bg-indigo-50 text-indigo-600 text-sm font-bold flex items-center justify-center" id="booth-num">7</span>
+                <span class="text-base font-bold text-gray-800" id="booth-name">부스 이름</span>
+            </div>
+
+            <!-- 부스 설명 -->
+            <label class="block text-sm font-bold text-gray-700 mb-1">부스 설명 <span class="text-red-500">*</span></label>
+            <textarea id="input-desc" maxlength="300" oninput="updateCharCount()" rows="4"
+                placeholder="부스에서 무엇을 체험할 수 있는지 참가자에게 설명해주세요.&#10;예) 인공지능에게 그림을 그려달라고 요청하면 몇 초 만에 작품이 완성됩니다!"
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 mb-1"></textarea>
+            <p class="text-xs text-gray-400 text-right mb-4" id="char-count">0 / 300자</p>
+
+            <!-- 이미지 -->
+            <label class="block text-sm font-bold text-gray-700 mb-1">이미지 <span class="text-xs font-normal text-gray-400">(선택, 최대 3장)</span></label>
+            <div id="image-list" class="flex flex-col gap-2 mb-2">
+                <p class="text-gray-400 text-xs text-center py-2">등록된 이미지가 없습니다. (선택사항)</p>
+            </div>
+            <div class="flex gap-2 mb-2">
+                <input id="input-image" type="text" placeholder="postimages 직접 링크 붙여넣기"
+                    class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                <button onclick="addImage()"
+                    class="bg-gray-700 hover:bg-gray-800 text-white font-bold px-3 py-2 rounded-lg text-sm whitespace-nowrap">
+                    + 추가
+                </button>
+            </div>
+            <div class="text-xs text-gray-400 bg-gray-50 rounded-lg p-3 mb-4 leading-relaxed">
+                💡 이미지 넣는 법: <span class="font-bold">postimages.org</span> 접속 → 이미지 업로드 → <span class="font-bold">"Direct link"</span> 복사 → 위에 붙여넣기<br>
+                이미지가 없어도 설명 글만으로 충분합니다.
+            </div>
+
+            <button id="btn-save" onclick="saveBooth()"
+                class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl">
+                💾 저장하기
+            </button>
+        </div>
+
+    </div>
+
+</body>
+</html>

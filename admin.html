@@ -77,20 +77,29 @@
                 container.innerHTML = '<p class="text-gray-400 text-sm text-center py-3">등록된 부스가 없습니다.</p>';
                 return;
             }
-            container.innerHTML = booths.map(b => `
+            container.innerHTML = booths.map(b => {
+                const hasDesc = b.description && b.description.trim().length > 0;
+                const imgCount = (b.images && b.images.length) || 0;
+                const statusBadge = type === 'booth'
+                    ? (hasDesc
+                        ? `<span class="text-xs bg-green-50 text-green-600 rounded px-2 py-0.5 whitespace-nowrap">✅ 설명${imgCount > 0 ? ` · 🖼️${imgCount}` : ''}</span>`
+                        : `<span class="text-xs bg-amber-50 text-amber-600 rounded px-2 py-0.5 whitespace-nowrap">⚠️ 미입력</span>`)
+                    : '';
+                return `
                 <div class="flex items-center gap-3 bg-gray-50 rounded-lg px-3 py-2 border border-gray-200">
-                    <div class="flex-1">
+                    <div class="flex-1 min-w-0">
                         <span class="text-xs font-mono text-gray-400 mr-2">${b.code}</span>
                         <span class="font-medium text-gray-800 text-sm">${b.name}</span>
                     </div>
-                    <div class="flex items-center gap-2">
+                    <div class="flex items-center gap-2 flex-shrink-0">
+                        ${statusBadge}
                         <span class="text-xs bg-white border border-gray-200 rounded px-2 py-0.5 font-mono text-gray-500 cursor-pointer hover:bg-gray-100"
-                            onclick="copyCode('${b.code}')" title="클릭하면 복사">📋 ${b.code}</span>
+                            onclick="copyCode('${b.code}')" title="클릭하면 복사">📋</span>
                         <button onclick="deleteBooth('${b.id}', '${b.name}')"
                             class="text-red-400 hover:text-red-600 text-sm font-bold px-2 py-1 rounded hover:bg-red-50">🗑️</button>
                     </div>
-                </div>
-            `).join('');
+                </div>`;
+            }).join('');
         }
 
         // 부스 코드 자동 생성 (BOOTH-01, BOOTH-02 ...)

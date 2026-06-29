@@ -44,7 +44,12 @@
                 const snapshot = await getDocs(collection(db, 'booths'));
                 snapshot.forEach(d => {
                     const data = d.data();
-                    allowedBooths[data.code] = { name: data.name, type: data.type };
+                    allowedBooths[data.code] = {
+                        name: data.name,
+                        type: data.type,
+                        description: data.description || '',
+                        images: data.images || []
+                    };
                 });
                 console.log('부스 목록 로드 완료:', Object.keys(allowedBooths));
             } catch(e) {
@@ -328,19 +333,119 @@
         // 참여 부스 목록 렌더링
         // ─────────────────────────────────────
         function renderStampList() {
+            renderUnvisitedBooths();
+            renderVisitedBooths();
+        }
+
+        // 아직 방문하지 않은 부스 (카드형, 클릭 가능)
+        function renderUnvisitedBooths() {
+            const container = document.getElementById('unvisited-list');
+            if (!container) return;
+
+            // 일반 부스(type === 'booth') 중 아직 스캔 안 한 것
+            const unvisited = Object.entries(allowedBooths)
+                .filter(([code, info]) => info.type === 'booth' && !myStamps.includes(code))
+                .sort((a, b) => a[0].localeCompare(b[0]));
+
+            document.getElementById('unvisited-count').innerText = unvisited.length;
+
+            if (unvisited.length === 0) {
+                container.innerHTML = '<p class="text-gray-400 text-sm text-center py-3">모든 부스를 방문했습니다! 🎉</p>';
+                return;
+            }
+
+            container.innerHTML = unvisited.map(([code, info]) => {
+                const num = code.replace('BOOTH-', '').replace(/^0+/, '');
+                const hasDetail = info.description || (info.images && info.images.length > 0);
+                return `<div onclick="openBoothDetail('${code}')"
+                    class="flex items-center gap-3 bg-white border border-gray-200 rounded-xl px-3 py-3 ${hasDetail ? 'cursor-pointer active:bg-gray-50' : ''}">
+                    <div class="w-9 h-9 rounded-lg bg-indigo-50 flex items-center justify-center flex-shrink-0">
+                        <span class="text-sm font-bold text-indigo-600">${num}</span>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <div class="text-sm font-bold text-gray-800 truncate">${info.name}</div>
+                        <div class="text-xs text-gray-400">${hasDetail ? '눌러서 부스 설명 보기' : '미방문'}</div>
+                    </div>
+                    ${hasDetail ? '<span class="text-gray-300">›</span>' : ''}
+                </div>`;
+            }).join('');
+        }
+
+        // 참여한 부스 (흐리게, 하단)
+        function renderVisitedBooths() {
             const container = document.getElementById('stamp-list');
+            document.getElementById('visited-count').innerText = myStamps.length;
+
             if (myStamps.length === 0) {
-                container.innerHTML = '<p class="text-gray-400 text-sm text-center py-2">아직 스캔한 부스가 없습니다.</p>';
+                container.innerHTML = '<p class="text-gray-400 text-sm text-center py-2">아직 참여한 부스가 없습니다.</p>';
                 return;
             }
             container.innerHTML = myStamps.map((code, index) => {
                 const boothName = allowedBooths[code] ? allowedBooths[code].name : code;
-                return `<div class="flex items-center gap-3 bg-indigo-50 rounded-lg px-3 py-2">
-                    <span class="w-6 h-6 bg-indigo-500 text-white text-xs font-bold rounded-full flex items-center justify-center flex-shrink-0">${index + 1}</span>
-                    <span class="text-indigo-800 font-medium text-sm">${boothName}</span>
-                    <span class="ml-auto text-green-500 text-sm">✅</span>
+                return `<div class="flex items-center gap-3 bg-green-50 rounded-lg px-3 py-2">
+                    <span class="w-6 h-6 bg-green-500 text-white text-xs font-bold rounded-full flex items-center justify-center flex-shrink-0">${index + 1}</span>
+                    <span class="text-green-800 font-medium text-sm flex-1">${boothName}</span>
+                    <span class="text-green-500 text-sm">✅</span>
                 </div>`;
             }).join('');
+        }
+
+        // ─────────────────────────────────────
+        // 부스 상세 설명 모달
+        // ─────────────────────────────────────
+        let currentDetailImages = [];
+        let currentImageIndex = 0;
+
+        window.openBoothDetail = function(code) {
+            const info = allowedBooths[code];
+            if (!info) return;
+            // 설명도 이미지도 없으면 모달 안 띄움
+            if (!info.description && (!info.images || info.images.length === 0)) return;
+
+            const num = code.replace('BOOTH-', '').replace(/^0+/, '');
+            document.getElementById('detail-num').innerText = num;
+            document.getElementById('detail-name').innerText = info.name;
+            document.getElementById('detail-desc').innerText = info.description || '설명이 준비 중입니다.';
+
+            currentDetailImages = info.images || [];
+            currentImageIndex = 0;
+            renderDetailImage();
+
+            document.getElementById('booth-detail-modal').style.display = 'flex';
+        }
+
+        function renderDetailImage() {
+            const imgWrap = document.getElementById('detail-img-wrap');
+            const dots = document.getElementById('detail-dots');
+            const counter = document.getElementById('detail-counter');
+
+            if (currentDetailImages.length === 0) {
+                imgWrap.style.display = 'none';
+                dots.innerHTML = '';
+                return;
+            }
+            imgWrap.style.display = 'block';
+            document.getElementById('detail-img').src = currentDetailImages[currentImageIndex];
+            counter.innerText = `${currentImageIndex + 1} / ${currentDetailImages.length}`;
+
+            // 페이지 점
+            dots.innerHTML = currentDetailImages.map((_, i) =>
+                `<span class="w-2 h-2 rounded-full ${i === currentImageIndex ? 'bg-indigo-500' : 'bg-gray-300'}"></span>`
+            ).join('');
+        }
+
+        window.nextDetailImage = function() {
+            if (currentDetailImages.length === 0) return;
+            currentImageIndex = (currentImageIndex + 1) % currentDetailImages.length;
+            renderDetailImage();
+        }
+        window.prevDetailImage = function() {
+            if (currentDetailImages.length === 0) return;
+            currentImageIndex = (currentImageIndex - 1 + currentDetailImages.length) % currentDetailImages.length;
+            renderDetailImage();
+        }
+        window.closeBoothDetail = function() {
+            document.getElementById('booth-detail-modal').style.display = 'none';
         }
 
         // ─────────────────────────────────────
@@ -693,11 +798,19 @@
             📷 QR 카메라 켜기
         </button>
 
-        <!-- 참여 부스 목록 -->
+        <!-- 아직 방문하지 않은 부스 (카드형, 클릭 가능) -->
+        <div class="mb-5">
+            <h2 class="font-bold text-gray-600 mb-2">📋 아직 방문하지 않은 부스 (<span id="unvisited-count">0</span>)</h2>
+            <div id="unvisited-list" class="flex flex-col gap-2">
+                <p class="text-gray-400 text-sm text-center py-3">부스 목록을 불러오는 중...</p>
+            </div>
+        </div>
+
+        <!-- 참여한 부스 목록 -->
         <div class="mb-6">
-            <h2 class="font-bold text-gray-600 mb-2">📋 참여한 부스</h2>
+            <h2 class="font-bold text-gray-600 mb-2">✅ 참여한 부스 (<span id="visited-count">0</span>)</h2>
             <div id="stamp-list" class="flex flex-col gap-2">
-                <p class="text-gray-400 text-sm text-center py-2">아직 스캔한 부스가 없습니다.</p>
+                <p class="text-gray-400 text-sm text-center py-2">아직 참여한 부스가 없습니다.</p>
             </div>
         </div>
 
@@ -758,6 +871,42 @@
             class="w-full bg-gray-200 text-gray-600 font-bold py-3 rounded-xl">
             ← 돌아가기
         </button>
+    </div>
+
+    <!-- ══════════════════════════════════ -->
+    <!-- 부스 상세 설명 모달                 -->
+    <!-- ══════════════════════════════════ -->
+    <div id="booth-detail-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:50; align-items:center; justify-content:center; padding:16px;">
+        <div class="bg-white rounded-2xl w-full max-w-md overflow-hidden" style="max-height:90vh; overflow-y:auto;">
+            <!-- 이미지 영역 -->
+            <div id="detail-img-wrap" style="position:relative; display:none;">
+                <div style="width:100%; aspect-ratio:4/3; background:#f1f5f9; overflow:hidden;">
+                    <img id="detail-img" src="" style="width:100%; height:100%; object-fit:cover;" alt="부스 이미지">
+                </div>
+                <!-- 좌우 넘김 버튼 -->
+                <button onclick="prevDetailImage()" style="position:absolute; left:8px; top:50%; transform:translateY(-50%); background:rgba(0,0,0,0.45); color:white; width:32px; height:32px; border-radius:50%; font-size:16px;">‹</button>
+                <button onclick="nextDetailImage()" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:rgba(0,0,0,0.45); color:white; width:32px; height:32px; border-radius:50%; font-size:16px;">›</button>
+                <!-- 페이지 카운터 -->
+                <div id="detail-counter" style="position:absolute; bottom:8px; right:8px; background:rgba(0,0,0,0.55); color:white; font-size:11px; padding:2px 8px; border-radius:10px;"></div>
+            </div>
+
+            <!-- 내용 영역 -->
+            <div class="p-5">
+                <div class="flex items-center gap-2 mb-3">
+                    <span class="w-7 h-7 rounded-full bg-indigo-50 text-indigo-600 text-xs font-bold flex items-center justify-center" id="detail-num">7</span>
+                    <span class="font-bold text-lg text-gray-800" id="detail-name">부스 이름</span>
+                </div>
+                <p id="detail-desc" class="text-sm text-gray-600 leading-relaxed mb-4" style="white-space:pre-wrap;"></p>
+
+                <!-- 이미지 페이지 점 -->
+                <div id="detail-dots" class="flex justify-center gap-1.5 mb-4"></div>
+
+                <button onclick="closeBoothDetail()"
+                    class="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 rounded-xl">
+                    닫기
+                </button>
+            </div>
+        </div>
     </div>
 
 </body>
