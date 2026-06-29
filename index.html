@@ -165,6 +165,26 @@
         }
 
         // ─────────────────────────────────────
+        // 닉네임 비속어/욕설 필터
+        // ─────────────────────────────────────
+        const bannedWords = [
+            '시발','씨발','씨발','시1발','ㅅㅂ','ㅄ','병신','ㅂㅅ','지랄','ㅈㄹ',
+            '개새','개색','새끼','색끼','새기','년놈','썅','쌍놈','쌍년','놈년',
+            '좆','좇','존나','존1나','죶','꺼져','닥쳐','엿먹','엿이나',
+            '미친','미췬','또라이','똘아이','등신','머저리','멍청',
+            '창녀','걸레','후레','후장','보지','자지','잠지','패드립','니애미','느금','니미',
+            '섹스','sex','fuck','shit','bitch','asshole','dick','pussy',
+            '강간','매춘','변태','왜놈','짱깨','쪽바리','흑형','짱께',
+            '죽어','뒤져','뒈져','꺼지','닥치','애미','애비'
+        ];
+
+        function containsBannedWord(nickname) {
+            // 공백·특수문자 제거 후 소문자로 비교 (우회 일부 차단)
+            const normalized = nickname.toLowerCase().replace(/[\s\.\-_*]/g, '');
+            return bannedWords.some(word => normalized.includes(word.toLowerCase()));
+        }
+
+        // ─────────────────────────────────────
         // 닉네임으로 기존 사용자 조회
         // ─────────────────────────────────────
         async function findUserByNickname(nickname) {
@@ -186,6 +206,11 @@
             const purposeEls = document.querySelectorAll('.purpose-btn.selected-btn');
 
             if (!nickname) { alert('닉네임을 입력해주세요.'); return; }
+            if (nickname.length < 2) { alert('닉네임은 2글자 이상 입력해주세요.'); return; }
+            if (containsBannedWord(nickname)) {
+                alert('🚫 사용할 수 없는 닉네임입니다.\n비속어·욕설이 포함되지 않은 닉네임으로 다시 입력해주세요.');
+                return;
+            }
             if (!targetEl) { alert('참여 대상을 선택해주세요.'); return; }
             if (purposeEls.length === 0) { alert('참여 목적을 하나 이상 선택해주세요.'); return; }
 
@@ -792,6 +817,13 @@
             <input id="input-nickname" type="text" placeholder="예) 행복한참새, 별이빛나는밤"
                 class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-400">
             <p class="text-xs text-gray-400 mt-1">다른 사람과 겹치지 않는 닉네임을 사용해주세요</p>
+            <div class="mt-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                <p class="text-xs text-amber-700 leading-relaxed">
+                    ⚠️ <span class="font-bold">닉네임은 전광판에 공개됩니다.</span><br>
+                    비속어·욕설·타인 비방 등 부적절한 닉네임은 입력이 제한되며,
+                    발견 시 운영진이 임의로 삭제할 수 있습니다.
+                </p>
+            </div>
         </div>
 
         <!-- 참여 대상 -->

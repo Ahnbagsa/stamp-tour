@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>관리자 페이지 - 박람회 스탬프 투어</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
@@ -96,8 +97,8 @@
                         ${statusBadge}
                         <button onclick="editBoothName('${b.id}', '${b.name.replace(/'/g, "\\'")}')"
                             class="text-xs text-indigo-400 hover:text-indigo-600 px-1.5 py-1 rounded hover:bg-indigo-50" title="이름 수정">✏️</button>
-                        <span class="text-xs bg-white border border-gray-200 rounded px-2 py-0.5 font-mono text-gray-500 cursor-pointer hover:bg-gray-100"
-                            onclick="copyCode('${b.code}')" title="클릭하면 복사">📋</span>
+                        <button onclick="downloadQR('${b.code}', '${b.name.replace(/'/g, "\\'")}')"
+                            class="text-xs text-teal-500 hover:text-teal-700 px-1.5 py-1 rounded hover:bg-teal-50" title="QR 다운로드">⬇️ QR</button>
                         <button onclick="deleteBooth('${b.id}', '${b.name.replace(/'/g, "\\'")}')"
                             class="text-red-400 hover:text-red-600 text-sm font-bold px-2 py-1 rounded hover:bg-red-50">🗑️</button>
                     </div>
@@ -186,6 +187,97 @@
             navigator.clipboard.writeText(code).then(() => {
                 alert(`복사됨: ${code}\nQR 코드 생성 시 이 코드를 사용하세요.`);
             });
+        }
+
+        // ─────────────────────────────────────
+        // QR 코드 생성 & 다운로드
+        // ─────────────────────────────────────
+        // 코드 텍스트 → QR 캔버스(dataURL) 생성
+        function generateQRDataURL(text) {
+            return new Promise((resolve) => {
+                const temp = document.createElement('div');
+                new QRCode(temp, {
+                    text: text,
+                    width: 600,
+                    height: 600,
+                    correctLevel: QRCode.CorrectLevel.H
+                });
+                // qrcodejs는 약간의 시간이 필요
+                setTimeout(() => {
+                    const img = temp.querySelector('img');
+                    const canvas = temp.querySelector('canvas');
+                    if (img && img.src) resolve(img.src);
+                    else if (canvas) resolve(canvas.toDataURL('image/png'));
+                    else resolve(null);
+                }, 100);
+            });
+        }
+
+        // 부스명 라벨이 붙은 QR 이미지 생성
+        async function makeLabeledQR(code, name) {
+            const qrDataUrl = await generateQRDataURL(code);
+            return new Promise((resolve) => {
+                const qrImg = new Image();
+                qrImg.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    const size = 600, padding = 40, labelH = 120;
+                    canvas.width = size + padding * 2;
+                    canvas.height = size + padding * 2 + labelH;
+                    const ctx = canvas.getContext('2d');
+                    // 흰 배경
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    // QR
+                    ctx.drawImage(qrImg, padding, padding, size, size);
+                    // 부스명
+                    ctx.fillStyle = '#1f2937';
+                    ctx.font = 'bold 40px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(name, canvas.width / 2, size + padding + 60);
+                    // 코드
+                    ctx.fillStyle = '#9ca3af';
+                    ctx.font = '28px monospace';
+                    ctx.fillText(code, canvas.width / 2, size + padding + 100);
+                    resolve(canvas.toDataURL('image/png'));
+                };
+                qrImg.src = qrDataUrl;
+            });
+        }
+
+        function downloadDataUrl(dataUrl, filename) {
+            const a = document.createElement('a');
+            a.href = dataUrl;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+
+        // 부스 1개 QR 다운로드
+        window.downloadQR = async function(code, name) {
+            const dataUrl = await makeLabeledQR(code, name);
+            downloadDataUrl(dataUrl, `${code}_${name}.png`);
+        }
+
+        // 전체 QR 다운로드 (순차적으로)
+        window.downloadAllQR = async function() {
+            const snap = await getDocs(collection(db, 'booths'));
+            const booths = [];
+            snap.forEach(d => {
+                const data = d.data();
+                booths.push({ code: data.code, name: data.name });
+            });
+            booths.sort((a, b) => a.code.localeCompare(b.code));
+
+            if (booths.length === 0) { alert('등록된 부스가 없습니다.'); return; }
+            if (!confirm(`총 ${booths.length}개의 QR 코드를 다운로드합니다.\n브라우저에서 여러 파일 다운로드를 허용해주세요.\n계속할까요?`)) return;
+
+            for (const b of booths) {
+                const dataUrl = await makeLabeledQR(b.code, b.name);
+                downloadDataUrl(dataUrl, `${b.code}_${b.name}.png`);
+                await new Promise(r => setTimeout(r, 400)); // 브라우저 다운로드 간격
+            }
+            alert('✅ 전체 QR 다운로드 완료!');
         }
 
         // ─────────────────────────────────────
@@ -881,7 +973,11 @@
 
             <!-- 일반 부스 -->
             <div class="bg-white rounded-2xl shadow p-5 mb-4">
-                <h2 class="font-bold text-gray-700 mb-3">🏪 일반 부스 목록</h2>
+                <div class="flex items-center justify-between mb-3">
+                    <h2 class="font-bold text-gray-700">🏪 일반 부스 목록</h2>
+                    <button onclick="downloadAllQR()"
+                        class="text-xs bg-teal-500 hover:bg-teal-600 text-white font-bold px-3 py-1.5 rounded-lg">⬇️ 전체 QR 다운로드</button>
+                </div>
                 <div id="booth-list" class="flex flex-col gap-2 mb-4"></div>
                 <div class="flex gap-2">
                     <input id="input-booth-name" type="text" placeholder="부스 이름 입력 (예: 진로상담 부스)"

@@ -121,18 +121,35 @@
         });
 
         // ── 닉네임 HUD 렌더링 ──
+        let nicknamePositions = {}; // 닉네임별 위치 기억 (깜빡임 방지)
+
         function renderNicknames(names) {
             const container = document.getElementById('nickname-cloud');
             if (names.length === 0) {
                 container.innerHTML = '<div class="hud-empty">참여자를 기다리는 중...</div>';
                 return;
             }
-            // 최근 참여자 위주로 최대 40개 표시
-            const display = names.slice(-40);
+            // 최근 참여자 위주로 최대 30개 표시
+            const display = names.slice(-30);
+
             container.innerHTML = display.map((name, i) => {
                 const sizeClass = ['nm-sm','nm-md','nm-lg'][i % 3];
-                const delay = (i % 10) * 0.3;
-                return `<span class="nickname ${sizeClass}" style="animation-delay:${delay}s">${name}</span>`;
+                // 위치를 한 번 정하면 기억 (재렌더 시 튀지 않게)
+                if (!nicknamePositions[name]) {
+                    nicknamePositions[name] = {
+                        top: 8 + Math.random() * 78,   // 8~86%
+                        left: 4 + Math.random() * 80,  // 4~84%
+                        dur: 6 + Math.random() * 6,    // 6~12초
+                        delay: Math.random() * 4,
+                        drift: (Math.random() * 2 - 1) // -1~1
+                    };
+                }
+                const p = nicknamePositions[name];
+                return `<span class="nickname ${sizeClass}"
+                    style="top:${p.top}%; left:${p.left}%;
+                           animation-duration:${p.dur}s, ${p.dur*0.7}s;
+                           animation-delay:${p.delay}s, 0s;
+                           --drift:${p.drift*14}px;">${name}</span>`;
             }).join('');
         }
 
@@ -225,6 +242,87 @@
         });
         startNoticeRotation();
         loadBoothNames();
+
+        // ─────────────────────────────────────
+        // 자비스 입자 배경 애니메이션
+        // ─────────────────────────────────────
+        function initParticles() {
+            const canvas = document.getElementById('particle-canvas');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            let particles = [];
+            let cx, cy, radius;
+
+            function resize() {
+                const rect = canvas.parentElement.getBoundingClientRect();
+                canvas.width = rect.width;
+                canvas.height = rect.height;
+                cx = canvas.width / 2;
+                cy = canvas.height / 2;
+                radius = Math.min(canvas.width, canvas.height) * 0.42;
+            }
+            resize();
+            window.addEventListener('resize', resize);
+
+            // 입자 생성 (구 형태로 분포)
+            const COUNT = 110;
+            for (let i = 0; i < COUNT; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const dist = Math.pow(Math.random(), 0.6) * radius;
+                particles.push({
+                    angle,
+                    dist,
+                    baseDist: dist,
+                    size: Math.random() * 2 + 0.5,
+                    speed: (Math.random() * 0.0006 + 0.0002) * (Math.random() < 0.5 ? 1 : -1),
+                    pulse: Math.random() * Math.PI * 2,
+                    pulseSpeed: Math.random() * 0.02 + 0.01,
+                    isStar: Math.random() < 0.12
+                });
+            }
+
+            function draw() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                // 중심 글로우
+                const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+                grad.addColorStop(0, 'rgba(0,180,255,0.18)');
+                grad.addColorStop(0.5, 'rgba(0,120,220,0.06)');
+                grad.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                particles.forEach(p => {
+                    p.angle += p.speed;
+                    p.pulse += p.pulseSpeed;
+                    const breathe = Math.sin(p.pulse) * 3;
+                    const d = p.baseDist + breathe;
+                    const x = cx + Math.cos(p.angle) * d;
+                    const y = cy + Math.sin(p.angle) * d * 0.92;
+                    const alpha = 0.3 + (Math.sin(p.pulse) * 0.5 + 0.5) * 0.6;
+
+                    if (p.isStar) {
+                        // 별 모양 (작은 십자 반짝임)
+                        ctx.fillStyle = `rgba(150,230,255,${alpha})`;
+                        ctx.fillRect(x - p.size, y - 0.4, p.size * 2, 0.8);
+                        ctx.fillRect(x - 0.4, y - p.size, 0.8, p.size * 2);
+                    } else {
+                        ctx.beginPath();
+                        ctx.arc(x, y, p.size, 0, Math.PI * 2);
+                        ctx.fillStyle = `rgba(90,200,255,${alpha})`;
+                        ctx.shadowBlur = 6;
+                        ctx.shadowColor = 'rgba(0,200,255,0.6)';
+                        ctx.fill();
+                        ctx.shadowBlur = 0;
+                    }
+                });
+
+                requestAnimationFrame(draw);
+            }
+            draw();
+        }
+        // 약간의 지연 후 시작 (레이아웃 완료 대기)
+        setTimeout(initParticles, 300);
     </script>
 
     <style>
@@ -353,36 +451,53 @@
         /* 중앙 닉네임 HUD */
         .hud-card {
             flex:1; display:flex; flex-direction:column;
-            background:rgba(3,16,40,0.85); border:1px solid rgba(0,212,255,0.3);
+            background:radial-gradient(ellipse at center, rgba(0,70,140,0.35) 0%, rgba(3,16,40,0.9) 70%);
+            border:1px solid rgba(0,212,255,0.3);
             border-radius:12px; padding:18px; position:relative; overflow:hidden;
         }
         .hud-card::before {
             content:''; position:absolute; top:0; left:0; right:0; height:2px;
-            background:linear-gradient(90deg,transparent,#00d4ff,transparent);
+            background:linear-gradient(90deg,transparent,#00d4ff,transparent); z-index:5;
+        }
+        /* 입자 캔버스 (배경) */
+        #particle-canvas {
+            position:absolute; inset:0; width:100%; height:100%; z-index:0;
         }
         .hud-title {
             font-family:'Orbitron',monospace; font-size:13px; color:#5ed4ff;
             letter-spacing:3px; text-align:center; margin-bottom:4px;
-            text-shadow:0 0 12px rgba(0,212,255,0.5);
+            text-shadow:0 0 12px rgba(0,212,255,0.5); position:relative; z-index:5;
         }
-        .hud-subtitle { font-size:11px; color:rgba(0,212,255,0.5); text-align:center; letter-spacing:2px; margin-bottom:16px; }
+        .hud-subtitle { font-size:11px; color:rgba(0,212,255,0.5); text-align:center; letter-spacing:2px; margin-bottom:16px; position:relative; z-index:5; }
         .nickname-cloud {
-            flex:1; display:flex; flex-wrap:wrap; gap:8px;
-            align-content:center; justify-content:center; overflow:hidden;
+            flex:1; position:relative; overflow:hidden; z-index:2;
         }
         .nickname {
+            position:absolute;
             border:1px solid rgba(0,212,255,0.35); border-radius:20px;
-            padding:4px 12px; color:#7fe3ff;
-            animation:floatIn 0.6s ease both, glow 3s ease-in-out infinite;
-            white-space:nowrap;
+            padding:4px 12px; color:#7fe3ff; white-space:nowrap;
+            backdrop-filter:blur(2px); background:rgba(3,16,40,0.4);
+            animation-name: floatDrift, glowPulse;
+            animation-timing-function: ease-in-out, ease-in-out;
+            animation-iteration-count: infinite, infinite;
+            animation-direction: alternate, normal;
+            transform: translate(-50%, -50%);
+            will-change: transform;
         }
-        .nm-sm { font-size:13px; opacity:0.75; }
+        .nm-sm { font-size:13px; opacity:0.78; }
         .nm-md { font-size:16px; color:#9fd4ff; }
-        .nm-lg { font-size:19px; color:#fff; border-color:rgba(0,212,255,0.6); background:rgba(0,212,255,0.08); }
-        @keyframes floatIn { from{opacity:0; transform:translateY(10px) scale(0.9)} to{opacity:1; transform:none} }
-        @keyframes glow {
-            0%,100% { box-shadow:0 0 6px rgba(0,212,255,0.15); }
-            50% { box-shadow:0 0 16px rgba(0,212,255,0.4); }
+        .nm-lg { font-size:19px; color:#fff; border-color:rgba(0,212,255,0.6); background:rgba(0,140,255,0.12); }
+        @keyframes floatDrift {
+            0%   { transform: translate(-50%, -50%) translateY(0) translateX(0); }
+            100% { transform: translate(-50%, -50%) translateY(-16px) translateX(var(--drift, 8px)); }
+        }
+        @keyframes glowPulse {
+            0%,100% { box-shadow:0 0 6px rgba(0,212,255,0.15); opacity:0.85; }
+            50%     { box-shadow:0 0 18px rgba(0,212,255,0.45); opacity:1; }
+        }
+        .hud-empty {
+            position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+            font-size:13px; color:rgba(160,212,255,0.4); z-index:3;
         }
 
         /* 추첨 당첨자 오버레이 */
@@ -484,6 +599,7 @@
         <!-- 중앙: 참여자 닉네임 HUD -->
         <div class="col">
             <div class="hud-card">
+                <canvas id="particle-canvas"></canvas>
                 <div class="hud-title">P A R T I C I P A N T S</div>
                 <div class="hud-subtitle">실시간 참여자 현황</div>
                 <div class="nickname-cloud" id="nickname-cloud">
