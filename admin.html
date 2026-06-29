@@ -820,17 +820,43 @@
 
         // 추첨 대상 풀 계산
         async function getDrawPool() {
+            // 최근 활동 시간 필터 사용 여부 + 분 단위
+            const useRecent = document.getElementById('draw-recent-toggle').checked;
+            const minutes = parseInt(document.getElementById('draw-recent-min').value) || 60;
+
+            // 최근 N분 안에 QR 스캔한 user_id 집합 구하기
+            let recentUserIds = null;
+            if (useRecent) {
+                recentUserIds = new Set();
+                const cutoff = Date.now() - minutes * 60 * 1000;
+                const logSnap = await getDocs(collection(db, 'stampLogs'));
+                logSnap.forEach(d => {
+                    const data = d.data();
+                    const t = data.scanned_at?.seconds ? data.scanned_at.seconds * 1000
+                            : (data.scanned_at?.toMillis ? data.scanned_at.toMillis() : 0);
+                    if (t >= cutoff && data.user_id) recentUserIds.add(data.user_id);
+                });
+            }
+
             const snap = await getDocs(collection(db, 'users'));
             const pool = [];
             snap.forEach(d => {
                 const data = d.data();
                 if (!data.nickname) return;
                 const cnt = (data.stamps || []).length;
+
+                // 메달 조건
                 let ok = false;
                 if (drawTarget === 'all') ok = true;
                 else if (drawTarget === 'bronze' && cnt >= 3) ok = true;
                 else if (drawTarget === 'silver' && cnt >= 6) ok = true;
                 else if (drawTarget === 'gold' && cnt >= 9) ok = true;
+
+                // 최근 활동 조건 (교집합)
+                if (ok && recentUserIds !== null) {
+                    ok = recentUserIds.has(d.id);
+                }
+
                 if (ok) pool.push(data.nickname);
             });
             return pool;
@@ -839,6 +865,13 @@
         async function updateDrawPool() {
             const pool = await getDrawPool();
             document.getElementById('draw-pool-count').innerText = pool.length;
+        }
+
+        // 빠른 시간 선택 버튼
+        window.setRecentMin = function(min) {
+            document.getElementById('draw-recent-min').value = min;
+            document.getElementById('draw-recent-toggle').checked = true;
+            updateDrawPool();
         }
 
         window.runDraw = async function() {
@@ -868,6 +901,15 @@
                 gold: '🥇 금메달 달성자 중 추첨'
             };
 
+            // 최근 활동 조건이 켜져 있으면 라벨에 시간 표시
+            let label = labelMap[drawTarget];
+            const useRecent = document.getElementById('draw-recent-toggle').checked;
+            if (useRecent) {
+                const min = parseInt(document.getElementById('draw-recent-min').value) || 60;
+                const timeText = min >= 60 && min % 60 === 0 ? `${min/60}시간` : `${min}분`;
+                label += ` (최근 ${timeText} 활동자)`;
+            }
+
             try {
                 // 기존 활성 추첨 모두 비활성화
                 const drawSnap = await getDocs(collection(db, 'draws'));
@@ -879,7 +921,7 @@
                 await addDoc(collection(db, 'draws'), {
                     winners: winners,
                     target: drawTarget,
-                    label: labelMap[drawTarget],
+                    label: label,
                     active: true,
                     drawn_at: new Date()
                 });
@@ -1110,6 +1152,26 @@
                     <button class="draw-target-btn rounded-lg py-2 px-3 text-sm border border-gray-300 bg-gray-50 text-gray-600" data-target="bronze" onclick="selectDrawTarget(this)">🥉 동메달 달성자</button>
                     <button class="draw-target-btn rounded-lg py-2 px-3 text-sm border border-gray-300 bg-gray-50 text-gray-600" data-target="silver" onclick="selectDrawTarget(this)">🥈 은메달 달성자</button>
                     <button class="draw-target-btn rounded-lg py-2 px-3 text-sm border border-gray-300 bg-gray-50 text-gray-600" data-target="gold" onclick="selectDrawTarget(this)">🥇 금메달 달성자</button>
+                </div>
+
+                <!-- 최근 활동자 필터 -->
+                <div class="bg-gray-50 border border-gray-200 rounded-lg p-3 mb-4">
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" id="draw-recent-toggle" onchange="updateDrawPool()" class="w-4 h-4">
+                        <span class="text-sm font-bold text-gray-700">⏱️ 최근 활동자만 추첨</span>
+                    </label>
+                    <div class="flex items-center gap-2 mt-2 ml-6">
+                        <span class="text-sm text-gray-500">최근</span>
+                        <input id="draw-recent-min" type="number" value="60" min="5" max="600" onchange="updateDrawPool()"
+                            class="w-20 text-center border border-gray-300 rounded-lg py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                        <span class="text-sm text-gray-500">분 이내 QR 스캔한 사람</span>
+                    </div>
+                    <div class="flex gap-1.5 mt-2 ml-6">
+                        <button onclick="setRecentMin(30)" class="text-xs bg-white border border-gray-300 rounded px-2 py-1 hover:bg-gray-100">30분</button>
+                        <button onclick="setRecentMin(60)" class="text-xs bg-white border border-gray-300 rounded px-2 py-1 hover:bg-gray-100">1시간</button>
+                        <button onclick="setRecentMin(120)" class="text-xs bg-white border border-gray-300 rounded px-2 py-1 hover:bg-gray-100">2시간</button>
+                        <button onclick="setRecentMin(180)" class="text-xs bg-white border border-gray-300 rounded px-2 py-1 hover:bg-gray-100">3시간</button>
+                    </div>
                 </div>
 
                 <!-- 당첨 인원 -->
