@@ -106,21 +106,119 @@
         });
 
         // 실시간 추첨 결과 (draws 컬렉션)
+        let lastDrawId = null;
+        let isRolling = false;
+
         onSnapshot(collection(db, 'draws'), snap => {
             let latest = null;
             snap.forEach(d => {
                 const data = d.data();
                 const t = data.drawn_at?.seconds || 0;
-                if (!latest || t > latest.t) latest = { ...data, t };
+                if (!latest || t > latest.t) latest = { ...data, t, id: d.id };
             });
             if (latest && latest.active) {
-                showWinners(latest);
+                // 새 추첨이면 룰렛 연출, 이미 본 추첨이면 결과만
+                if (latest.id !== lastDrawId) {
+                    lastDrawId = latest.id;
+                    startRouletteThenShow(latest);
+                } else if (!isRolling) {
+                    showWinners(latest);
+                }
             } else {
+                lastDrawId = latest ? latest.id : null;
                 hideWinners();
             }
         });
 
-        // ── 닉네임 HUD 렌더링 ──
+        // ── 룰렛 연출 → 당첨자 표시 ──
+        function startRouletteThenShow(draw) {
+            if (isRolling) return;
+            isRolling = true;
+
+            const overlay = document.getElementById('winner-overlay');
+            const list = document.getElementById('winner-list');
+            const sub = document.getElementById('winner-sub');
+            const header = document.querySelector('.winner-header');
+            const subhead = document.querySelector('.winner-subhead');
+
+            // 룰렛용 후보 닉네임 (현재 참여자 전체)
+            const pool = allNicknames.length > 0 ? allNicknames : (draw.winners || ['?']);
+            const winners = draw.winners || [];
+
+            // 오버레이 룰렛 모드로 표시
+            overlay.style.display = 'flex';
+            header.textContent = '🎰 추첨 중 🎰';
+            subhead.textContent = '당첨자를 뽑고 있습니다...';
+            sub.textContent = '';
+            list.innerHTML = `<div class="roulette-box"><span id="roulette-name">${pool[0]}</span></div>`;
+
+            const rouletteEl = document.getElementById('roulette-name');
+            const TOTAL = 10000; // 10초
+            const start = Date.now();
+
+            function spin() {
+                const elapsed = Date.now() - start;
+                const progress = elapsed / TOTAL;
+
+                if (progress >= 1) {
+                    // 멈춤 → 당첨자 표시
+                    finishRoulette(draw, winners);
+                    return;
+                }
+
+                // 점점 느려지는 간격 (ease-out)
+                rouletteEl.textContent = pool[Math.floor(Math.random() * pool.length)];
+
+                // 간격: 처음 50ms → 끝 400ms 로 점점 느려짐
+                const interval = 50 + Math.pow(progress, 3) * 450;
+                setTimeout(spin, interval);
+            }
+            spin();
+        }
+
+        function finishRoulette(draw, winners) {
+            const list = document.getElementById('winner-list');
+            const sub = document.getElementById('winner-sub');
+            const header = document.querySelector('.winner-header');
+            const subhead = document.querySelector('.winner-subhead');
+
+            header.textContent = '🎉 W I N N E R 🎉';
+            subhead.textContent = '이벤트 당첨자 발표';
+
+            list.innerHTML = winners.map((w, i) =>
+                `<div class="winner-row" style="animation-delay:${i*0.25}s">
+                    <span class="winner-rank">${i+1}</span>
+                    <span class="winner-name">${w}</span>
+                </div>`).join('');
+
+            sub.textContent = draw.label || '당첨을 축하합니다!';
+            isRolling = false;
+        }
+
+        // ── 추첨 당첨자 표시 (룰렛 없이 바로) ──
+        function showWinners(draw) {
+            const overlay = document.getElementById('winner-overlay');
+            const list = document.getElementById('winner-list');
+            const sub = document.getElementById('winner-sub');
+            const header = document.querySelector('.winner-header');
+            const subhead = document.querySelector('.winner-subhead');
+
+            header.textContent = '🎉 W I N N E R 🎉';
+            subhead.textContent = '이벤트 당첨자 발표';
+
+            list.innerHTML = (draw.winners || []).map((w, i) =>
+                `<div class="winner-row" style="animation-delay:${i*0.25}s">
+                    <span class="winner-rank">${i+1}</span>
+                    <span class="winner-name">${w}</span>
+                </div>`).join('');
+
+            sub.textContent = draw.label || '당첨을 축하합니다!';
+            overlay.style.display = 'flex';
+        }
+        function hideWinners() {
+            if (isRolling) return; // 룰렛 도는 중엔 숨기지 않음
+            document.getElementById('winner-overlay').style.display = 'none';
+        }
         let nicknamePositions = {}; // 닉네임별 위치 기억 (깜빡임 방지)
 
         function renderNicknames(names) {
@@ -151,25 +249,6 @@
                            animation-delay:${p.delay}s, 0s;
                            --drift:${p.drift*14}px;">${name}</span>`;
             }).join('');
-        }
-
-        // ── 추첨 당첨자 표시 ──
-        function showWinners(draw) {
-            const overlay = document.getElementById('winner-overlay');
-            const list = document.getElementById('winner-list');
-            const sub = document.getElementById('winner-sub');
-
-            list.innerHTML = (draw.winners || []).map((w, i) =>
-                `<div class="winner-row" style="animation-delay:${i*0.3}s">
-                    <span class="winner-rank">${i+1}</span>
-                    <span class="winner-name">${w}</span>
-                </div>`).join('');
-
-            sub.textContent = draw.label || '당첨을 축하합니다!';
-            overlay.style.display = 'flex';
-        }
-        function hideWinners() {
-            document.getElementById('winner-overlay').style.display = 'none';
         }
 
         function renderTargetChart(data, total) {
@@ -514,6 +593,24 @@
         @keyframes winnerPulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
         .winner-subhead { font-size:13px; color:#5ed4ff; letter-spacing:3px; margin-bottom:32px; }
         .winner-list { display:flex; flex-direction:column; gap:16px; margin-bottom:28px; }
+        /* 룰렛 박스 */
+        .roulette-box {
+            display:flex; align-items:center; justify-content:center;
+            min-width:480px; min-height:90px; padding:18px 48px;
+            background:linear-gradient(90deg,rgba(0,212,255,0.1),rgba(123,97,255,0.1));
+            border:2px solid rgba(0,212,255,0.5); border-radius:14px;
+            box-shadow:0 0 30px rgba(0,212,255,0.3);
+            animation:roulettePulse 0.3s ease-in-out infinite;
+        }
+        #roulette-name {
+            font-size:46px; font-weight:700; color:#fff;
+            text-shadow:0 0 24px rgba(0,212,255,0.8);
+            letter-spacing:1px;
+        }
+        @keyframes roulettePulse {
+            0%,100% { box-shadow:0 0 30px rgba(0,212,255,0.3); border-color:rgba(0,212,255,0.5); }
+            50% { box-shadow:0 0 45px rgba(0,212,255,0.6); border-color:rgba(94,212,255,0.9); }
+        }
         .winner-row {
             display:flex; align-items:center; gap:20px;
             background:linear-gradient(90deg,rgba(255,209,102,0.12),rgba(0,212,255,0.08));
