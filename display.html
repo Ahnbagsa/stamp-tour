@@ -117,94 +117,160 @@
                 if (!latest || t > latest.t) latest = { ...data, t, id: d.id };
             });
             if (latest && latest.active) {
-                // 새 추첨이면 룰렛 연출, 이미 본 추첨이면 결과만
                 if (latest.id !== lastDrawId) {
                     lastDrawId = latest.id;
-                    startRouletteThenShow(latest);
+                    startDrawAnimation(latest);
                 } else if (!isRolling) {
                     showWinners(latest);
                 }
             } else {
                 lastDrawId = latest ? latest.id : null;
+                isRolling = false;
+                drawMode = 'normal';
                 hideWinners();
             }
         });
 
-        // ── 룰렛 연출 → 당첨자 표시 ──
-        function startRouletteThenShow(draw) {
+        // ─────────────────────────────────────
+        // 움직이는 닉네임 시스템
+        // ─────────────────────────────────────
+        let nodes = {};          // { name: {el, x, y, vx, vy, size} }
+        let drawMode = 'normal';  // 'normal' | 'fast' | 'gather'
+        let gatherTargets = {};   // 추첨 시 당첨자가 모일 위치
+        let hudW = 0, hudH = 0;
+
+        function renderNicknames(names) {
+            const container = document.getElementById('nickname-cloud');
+            const empty = container.querySelector('.hud-empty');
+            if (names.length === 0) {
+                if (!empty) container.innerHTML = '<div class="hud-empty">참여자를 기다리는 중...</div>';
+                return;
+            }
+            if (empty) empty.remove();
+
+            const display = names.slice(-30);
+            const rect = container.getBoundingClientRect();
+            hudW = rect.width; hudH = rect.height;
+
+            // 새 닉네임 추가
+            display.forEach((name, i) => {
+                if (!nodes[name]) {
+                    const el = document.createElement('span');
+                    const sizeClass = ['nm-sm','nm-md','nm-lg'][i % 3];
+                    el.className = 'nickname ' + sizeClass;
+                    el.textContent = name;
+                    container.appendChild(el);
+                    nodes[name] = {
+                        el,
+                        x: 40 + Math.random() * (hudW - 80),
+                        y: 30 + Math.random() * (hudH - 60),
+                        vx: (Math.random() * 2 - 1) * 0.4,
+                        vy: (Math.random() * 2 - 1) * 0.4
+                    };
+                }
+            });
+
+            // 사라진 닉네임 제거
+            Object.keys(nodes).forEach(name => {
+                if (!display.includes(name)) {
+                    nodes[name].el.remove();
+                    delete nodes[name];
+                }
+            });
+        }
+
+        // 매 프레임 닉네임 위치 갱신
+        function animateNicknames() {
+            const container = document.getElementById('nickname-cloud');
+            if (container) {
+                const rect = container.getBoundingClientRect();
+                hudW = rect.width; hudH = rect.height;
+            }
+
+            const speedMul = drawMode === 'fast' ? 9 : 1;
+
+            Object.entries(nodes).forEach(([name, n]) => {
+                if (drawMode === 'gather' && gatherTargets[name]) {
+                    // 당첨자: 목표 지점으로 부드럽게 이동
+                    const t = gatherTargets[name];
+                    n.x += (t.x - n.x) * 0.08;
+                    n.y += (t.y - n.y) * 0.08;
+                    n.el.classList.add('nm-winner');
+                } else if (drawMode === 'gather') {
+                    // 비당첨자: 빠르게 흩어져 사라지듯 페이드
+                    n.x += n.vx * 6;
+                    n.y += n.vy * 6;
+                    n.el.style.opacity = '0.05';
+                } else {
+                    // 평소/빠른 이동
+                    n.x += n.vx * speedMul;
+                    n.y += n.vy * speedMul;
+                    // 벽 튕김
+                    if (n.x < 20) { n.x = 20; n.vx *= -1; }
+                    if (n.x > hudW - 20) { n.x = hudW - 20; n.vx *= -1; }
+                    if (n.y < 16) { n.y = 16; n.vy *= -1; }
+                    if (n.y > hudH - 16) { n.y = hudH - 16; n.vy *= -1; }
+                }
+                n.el.style.left = n.x + 'px';
+                n.el.style.top = n.y + 'px';
+            });
+
+            requestAnimationFrame(animateNicknames);
+        }
+        requestAnimationFrame(animateNicknames);
+
+        // ─────────────────────────────────────
+        // 추첨 연출
+        // ─────────────────────────────────────
+        function startDrawAnimation(draw) {
             if (isRolling) return;
             isRolling = true;
-
-            const overlay = document.getElementById('winner-overlay');
-            const list = document.getElementById('winner-list');
-            const sub = document.getElementById('winner-sub');
-            const header = document.querySelector('.winner-header');
-            const subhead = document.querySelector('.winner-subhead');
-
-            // 룰렛용 후보 닉네임 (현재 참여자 전체)
-            const pool = allNicknames.length > 0 ? allNicknames : (draw.winners || ['?']);
             const winners = draw.winners || [];
 
-            // 오버레이 룰렛 모드로 표시
-            overlay.style.display = 'flex';
-            header.textContent = '🎰 추첨 중 🎰';
-            subhead.textContent = '당첨자를 뽑고 있습니다...';
-            sub.textContent = '';
-            list.innerHTML = `<div class="roulette-box"><span id="roulette-name">${pool[0]}</span></div>`;
+            // 1단계: 빠르게 움직임 (10초)
+            drawMode = 'fast';
+            document.getElementById('draw-banner').style.display = 'flex';
+            document.getElementById('draw-banner-text').textContent = '🎰 추첨 중...';
 
-            const rouletteEl = document.getElementById('roulette-name');
-            const TOTAL = 10000; // 10초
-            const start = Date.now();
+            setTimeout(() => {
+                // 2단계: 당첨자를 가운데로 모으기
+                drawMode = 'gather';
+                document.getElementById('draw-banner-text').textContent = '🎉 당첨자 발표!';
 
-            function spin() {
-                const elapsed = Date.now() - start;
-                const progress = elapsed / TOTAL;
+                // 당첨자 목표 위치 계산 (가운데 세로 정렬)
+                gatherTargets = {};
+                const n = winners.length;
+                winners.forEach((w, i) => {
+                    gatherTargets[w] = {
+                        x: hudW / 2,
+                        y: hudH / 2 - (n-1)*32/2 + i*32
+                    };
+                    // 당첨자가 화면에 없으면 노드 생성
+                    if (!nodes[w]) {
+                        const container = document.getElementById('nickname-cloud');
+                        const el = document.createElement('span');
+                        el.className = 'nickname nm-lg';
+                        el.textContent = w;
+                        container.appendChild(el);
+                        nodes[w] = { el, x: hudW/2, y: hudH/2, vx:0, vy:0 };
+                    }
+                });
 
-                if (progress >= 1) {
-                    // 멈춤 → 당첨자 표시
-                    finishRoulette(draw, winners);
-                    return;
-                }
+                // 3단계: 잠시 후 WINNER 오버레이 표시
+                setTimeout(() => {
+                    showWinners(draw);
+                    document.getElementById('draw-banner').style.display = 'none';
+                    isRolling = false;
+                }, 3500);
 
-                // 점점 느려지는 간격 (ease-out)
-                rouletteEl.textContent = pool[Math.floor(Math.random() * pool.length)];
-
-                // 간격: 처음 50ms → 끝 400ms 로 점점 느려짐
-                const interval = 50 + Math.pow(progress, 3) * 450;
-                setTimeout(spin, interval);
-            }
-            spin();
+            }, 10000);
         }
 
-        function finishRoulette(draw, winners) {
-            const list = document.getElementById('winner-list');
-            const sub = document.getElementById('winner-sub');
-            const header = document.querySelector('.winner-header');
-            const subhead = document.querySelector('.winner-subhead');
-
-            header.textContent = '🎉 W I N N E R 🎉';
-            subhead.textContent = '이벤트 당첨자 발표';
-
-            list.innerHTML = winners.map((w, i) =>
-                `<div class="winner-row" style="animation-delay:${i*0.25}s">
-                    <span class="winner-rank">${i+1}</span>
-                    <span class="winner-name">${w}</span>
-                </div>`).join('');
-
-            sub.textContent = draw.label || '당첨을 축하합니다!';
-            isRolling = false;
-        }
-
-        // ── 추첨 당첨자 표시 (룰렛 없이 바로) ──
+        // ── 당첨자 오버레이 ──
         function showWinners(draw) {
             const overlay = document.getElementById('winner-overlay');
             const list = document.getElementById('winner-list');
             const sub = document.getElementById('winner-sub');
-            const header = document.querySelector('.winner-header');
-            const subhead = document.querySelector('.winner-subhead');
-
-            header.textContent = '🎉 W I N N E R 🎉';
-            subhead.textContent = '이벤트 당첨자 발표';
 
             list.innerHTML = (draw.winners || []).map((w, i) =>
                 `<div class="winner-row" style="animation-delay:${i*0.25}s">
@@ -216,39 +282,18 @@
             overlay.style.display = 'flex';
         }
         function hideWinners() {
-            if (isRolling) return; // 룰렛 도는 중엔 숨기지 않음
+            if (isRolling) return;
+            drawMode = 'normal';
+            gatherTargets = {};
+            // 닉네임 상태 복원
+            Object.values(nodes).forEach(n => {
+                n.el.style.opacity = '';
+                n.el.classList.remove('nm-winner');
+                if (Math.abs(n.vx) < 0.05) n.vx = (Math.random()*2-1)*0.4;
+                if (Math.abs(n.vy) < 0.05) n.vy = (Math.random()*2-1)*0.4;
+            });
             document.getElementById('winner-overlay').style.display = 'none';
-        }
-        let nicknamePositions = {}; // 닉네임별 위치 기억 (깜빡임 방지)
-
-        function renderNicknames(names) {
-            const container = document.getElementById('nickname-cloud');
-            if (names.length === 0) {
-                container.innerHTML = '<div class="hud-empty">참여자를 기다리는 중...</div>';
-                return;
-            }
-            // 최근 참여자 위주로 최대 30개 표시
-            const display = names.slice(-30);
-
-            container.innerHTML = display.map((name, i) => {
-                const sizeClass = ['nm-sm','nm-md','nm-lg'][i % 3];
-                // 위치를 한 번 정하면 기억 (재렌더 시 튀지 않게)
-                if (!nicknamePositions[name]) {
-                    nicknamePositions[name] = {
-                        top: 8 + Math.random() * 78,   // 8~86%
-                        left: 4 + Math.random() * 80,  // 4~84%
-                        dur: 6 + Math.random() * 6,    // 6~12초
-                        delay: Math.random() * 4,
-                        drift: (Math.random() * 2 - 1) // -1~1
-                    };
-                }
-                const p = nicknamePositions[name];
-                return `<span class="nickname ${sizeClass}"
-                    style="top:${p.top}%; left:${p.left}%;
-                           animation-duration:${p.dur}s, ${p.dur*0.7}s;
-                           animation-delay:${p.delay}s, 0s;
-                           --drift:${p.drift*14}px;">${name}</span>`;
-            }).join('');
+            document.getElementById('draw-banner').style.display = 'none';
         }
 
         function renderTargetChart(data, total) {
@@ -556,27 +601,35 @@
             border:1px solid rgba(0,212,255,0.35); border-radius:20px;
             padding:4px 12px; color:#7fe3ff; white-space:nowrap;
             backdrop-filter:blur(2px); background:rgba(3,16,40,0.4);
-            animation-name: floatDrift, glowPulse;
-            animation-timing-function: ease-in-out, ease-in-out;
-            animation-iteration-count: infinite, infinite;
-            animation-direction: alternate, normal;
             transform: translate(-50%, -50%);
-            will-change: transform;
+            transition: opacity 0.5s ease, color 0.4s ease, box-shadow 0.4s ease;
+            box-shadow:0 0 8px rgba(0,212,255,0.2);
+            will-change: left, top;
         }
         .nm-sm { font-size:13px; opacity:0.78; }
         .nm-md { font-size:16px; color:#9fd4ff; }
         .nm-lg { font-size:19px; color:#fff; border-color:rgba(0,212,255,0.6); background:rgba(0,140,255,0.12); }
-        @keyframes floatDrift {
-            0%   { transform: translate(-50%, -50%) translateY(0) translateX(0); }
-            100% { transform: translate(-50%, -50%) translateY(-16px) translateX(var(--drift, 8px)); }
-        }
-        @keyframes glowPulse {
-            0%,100% { box-shadow:0 0 6px rgba(0,212,255,0.15); opacity:0.85; }
-            50%     { box-shadow:0 0 18px rgba(0,212,255,0.45); opacity:1; }
+        .nm-winner {
+            font-size:28px !important; color:#fff !important; font-weight:700;
+            border-color:rgba(255,209,102,0.9) !important;
+            background:rgba(255,209,102,0.15) !important;
+            box-shadow:0 0 28px rgba(255,209,102,0.7) !important;
+            z-index:20;
         }
         .hud-empty {
             position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
             font-size:13px; color:rgba(160,212,255,0.4); z-index:3;
+        }
+
+        /* 추첨 배너 (HUD 상단) */
+        .draw-banner {
+            display:none; position:absolute; top:42px; left:0; right:0; z-index:15;
+            align-items:center; justify-content:center;
+        }
+        .draw-banner-inner {
+            font-family:'Orbitron',monospace; font-size:16px; font-weight:700; color:#ffd166;
+            letter-spacing:2px; text-shadow:0 0 16px rgba(255,209,102,0.7);
+            animation:winnerPulse 1s ease-in-out infinite;
         }
 
         /* 추첨 당첨자 오버레이 */
@@ -593,24 +646,6 @@
         @keyframes winnerPulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
         .winner-subhead { font-size:13px; color:#5ed4ff; letter-spacing:3px; margin-bottom:32px; }
         .winner-list { display:flex; flex-direction:column; gap:16px; margin-bottom:28px; }
-        /* 룰렛 박스 */
-        .roulette-box {
-            display:flex; align-items:center; justify-content:center;
-            min-width:480px; min-height:90px; padding:18px 48px;
-            background:linear-gradient(90deg,rgba(0,212,255,0.1),rgba(123,97,255,0.1));
-            border:2px solid rgba(0,212,255,0.5); border-radius:14px;
-            box-shadow:0 0 30px rgba(0,212,255,0.3);
-            animation:roulettePulse 0.3s ease-in-out infinite;
-        }
-        #roulette-name {
-            font-size:46px; font-weight:700; color:#fff;
-            text-shadow:0 0 24px rgba(0,212,255,0.8);
-            letter-spacing:1px;
-        }
-        @keyframes roulettePulse {
-            0%,100% { box-shadow:0 0 30px rgba(0,212,255,0.3); border-color:rgba(0,212,255,0.5); }
-            50% { box-shadow:0 0 45px rgba(0,212,255,0.6); border-color:rgba(94,212,255,0.9); }
-        }
         .winner-row {
             display:flex; align-items:center; gap:20px;
             background:linear-gradient(90deg,rgba(255,209,102,0.12),rgba(0,212,255,0.08));
@@ -697,6 +732,9 @@
         <div class="col">
             <div class="hud-card">
                 <canvas id="particle-canvas"></canvas>
+                <div class="draw-banner" id="draw-banner">
+                    <span class="draw-banner-inner" id="draw-banner-text">🎰 추첨 중...</span>
+                </div>
                 <div class="hud-title">P A R T I C I P A N T S</div>
                 <div class="hud-subtitle">실시간 참여자 현황</div>
                 <div class="nickname-cloud" id="nickname-cloud">
