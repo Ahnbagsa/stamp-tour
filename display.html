@@ -30,6 +30,20 @@
             snap.forEach(d => { boothNames[d.data().code] = d.data().name; });
         }
 
+        // 행사명 로드 → 헤더 반영
+        async function loadEventName() {
+            try {
+                const snap = await getDocs(collection(db, 'settings'));
+                snap.forEach(d => {
+                    if (d.id === 'event' && d.data().eventName) {
+                        document.getElementById('event-title').textContent = d.data().eventName;
+                        document.title = d.data().eventName + ' - 실시간 현황';
+                    }
+                });
+            } catch(e) { console.error('행사명 로드 실패:', e); }
+        }
+        loadEventName();
+
         // 실시간 사용자 → 참여자 수 / 닉네임 / 참여대상 / 스탬프 달성
         onSnapshot(collection(db, 'users'), snap => {
             document.getElementById('total-users').textContent = snap.size;
@@ -677,7 +691,7 @@
         <div>
             <div style="display:flex;align-items:center;gap:10px">
                 <span class="ai-badge">AI · EDU</span>
-                <span class="event-title">에듀테크 AI 과학 교육박람회</span>
+                <span class="event-title" id="event-title">에듀테크 AI 과학 교육박람회</span>
             </div>
             <div class="event-sub">EDTECH AI SCIENCE EDUCATION EXPO · REAL-TIME DASHBOARD</div>
         </div>

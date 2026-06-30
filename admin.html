@@ -703,6 +703,40 @@
                     document.getElementById('intro-message-input').value = data.message || '';
                 }
             } catch(e) { console.error('인트로 설정 로드 실패:', e); }
+
+            // 행사 설정 (행사명 + 배치도)
+            try {
+                const evtSnap = await getDoc(doc(db, 'settings', 'event'));
+                if (evtSnap.exists()) {
+                    const data = evtSnap.data();
+                    document.getElementById('event-name-input').value = data.eventName || '';
+                    document.getElementById('event-map-input').value = data.mapImage || '';
+                }
+            } catch(e) { console.error('행사 설정 로드 실패:', e); }
+        }
+
+        window.saveEventSettings = async function() {
+            const eventName = document.getElementById('event-name-input').value.trim();
+            const mapImage = document.getElementById('event-map-input').value.trim();
+
+            if (mapImage && !mapImage.startsWith('http')) {
+                alert('배치도 링크는 http로 시작하는 직접 링크여야 합니다.');
+                return;
+            }
+
+            const btn = document.getElementById('btn-save-event');
+            btn.disabled = true; btn.innerText = '저장 중...';
+            try {
+                await setDoc(doc(db, 'settings', 'event'), {
+                    eventName: eventName,
+                    mapImage: mapImage,
+                    updated_at: new Date()
+                });
+                alert('✅ 행사 설정이 저장되었습니다!\n참가자 화면과 전광판에 반영됩니다.');
+            } catch(e) {
+                alert('저장 중 오류: ' + e.message);
+            }
+            btn.disabled = false; btn.innerText = '💾 행사 설정 저장';
         }
 
         window.saveIntro = async function() {
@@ -1064,6 +1098,27 @@
                     </button>
                 </div>
                 <p class="text-xs text-gray-400 mt-2">💡 공지사항은 4초마다 자동으로 순환 표시됩니다.</p>
+            </div>
+
+            <!-- 행사 설정 (행사명 + 배치도) -->
+            <div class="bg-white rounded-2xl shadow p-5 mb-4">
+                <h2 class="font-bold text-gray-700 mb-1">🎪 행사 설정</h2>
+                <p class="text-xs text-gray-400 mb-4">행사명은 참가자 메인 화면과 전광판에 함께 반영됩니다.</p>
+
+                <label class="block text-sm font-bold text-gray-700 mb-1">행사명 (프로그램 이름)</label>
+                <input id="event-name-input" type="text" placeholder="예) 스탬프 Tour, 에듀테크 박람회"
+                    class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-1 focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                <p class="text-xs text-gray-400 mb-3">💡 비워두면 기본값 "스탬프 Tour"가 표시됩니다.</p>
+
+                <label class="block text-sm font-bold text-gray-700 mb-1">부스 배치도 이미지 링크 <span class="text-xs font-normal text-gray-400">(선택)</span></label>
+                <input id="event-map-input" type="text" placeholder="배치도 이미지 직접 링크(.jpg/.png)"
+                    class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-1 focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                <p class="text-xs text-gray-400 mb-4">💡 등록하면 참가자 화면에 "🗺️ 부스 배치도 보기" 버튼이 나타납니다. imgbb.com에서 직접 링크를 만들어 붙여넣으세요.</p>
+
+                <button id="btn-save-event" onclick="saveEventSettings()"
+                    class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 rounded-lg text-sm">
+                    💾 행사 설정 저장
+                </button>
             </div>
 
             <!-- 시작 화면(인트로) 설정 -->

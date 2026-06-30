@@ -336,7 +336,6 @@
         // ─────────────────────────────────────
         function updateUI() {
             const count = myStamps.length;
-            document.getElementById('stamp-count').innerText = count;
             updateUserHeader();
 
             // 동메달 버튼 (3개)
@@ -731,11 +730,16 @@
         // ─────────────────────────────────────
         // 앱 초기화
         // ─────────────────────────────────────
+        let boothMapUrl = '';
+
         async function loadIntro() {
             try {
                 const snap = await getDocs(collection(db, 'settings'));
-                let intro = null;
-                snap.forEach(d => { if (d.id === 'intro') intro = d.data(); });
+                let intro = null, event = null;
+                snap.forEach(d => {
+                    if (d.id === 'intro') intro = d.data();
+                    if (d.id === 'event') event = d.data();
+                });
 
                 if (intro) {
                     if (intro.poster) {
@@ -746,7 +750,27 @@
                     if (intro.title) document.getElementById('intro-title').innerText = intro.title;
                     if (intro.message) document.getElementById('intro-message').innerHTML = intro.message.replace(/\n/g, '<br>');
                 }
-            } catch(e) { console.error('인트로 로드 실패:', e); }
+
+                // 행사명 → 메인 화면 제목
+                if (event && event.eventName) {
+                    document.getElementById('main-title').innerText = '🎪 ' + event.eventName;
+                }
+                // 부스 배치도 → 버튼 표시
+                if (event && event.mapImage) {
+                    boothMapUrl = event.mapImage;
+                    document.getElementById('btn-map').style.display = 'flex';
+                }
+            } catch(e) { console.error('설정 로드 실패:', e); }
+        }
+
+        // 부스 배치도 모달
+        window.openBoothMap = function() {
+            if (!boothMapUrl) return;
+            document.getElementById('booth-map-img').src = boothMapUrl;
+            document.getElementById('booth-map-modal').style.display = 'flex';
+        }
+        window.closeBoothMap = function() {
+            document.getElementById('booth-map-modal').style.display = 'none';
         }
 
         window.startApp = function() {
@@ -926,19 +950,21 @@
             </div>
         </div>
 
-        <h1 class="text-2xl font-bold text-center text-gray-800 mb-2">🎪 스탬프 Tour</h1>
-
-        <div class="bg-indigo-50 text-indigo-800 p-4 rounded-xl text-center font-bold text-lg mb-4">
-            현재 모은 스탬프: <span id="stamp-count" class="text-3xl text-indigo-600">0</span> 개
-        </div>
+        <h1 class="text-2xl font-bold text-center text-gray-800 mb-4" id="main-title">🎪 스탬프 Tour</h1>
 
         <!-- QR 리더 영역 -->
         <div id="reader" style="display:none; width:100%;" class="mb-4 rounded-xl overflow-hidden border-2 border-gray-200"></div>
 
         <!-- QR 스캔 버튼 -->
         <button id="btn-start-scan" onclick="startScanner()"
-            class="w-full bg-gray-800 hover:bg-gray-900 text-white font-bold py-4 rounded-xl mb-4 flex justify-center gap-2">
+            class="w-full bg-gray-800 hover:bg-gray-900 text-white font-bold py-4 rounded-xl mb-3 flex justify-center gap-2">
             📷 QR 카메라 켜기
+        </button>
+
+        <!-- 부스 배치도 버튼 (배치도 등록 시에만 표시) -->
+        <button id="btn-map" onclick="openBoothMap()" style="display:none;"
+            class="w-full bg-teal-50 hover:bg-teal-100 text-teal-700 font-bold py-3 rounded-xl mb-4 border border-teal-200 flex justify-center gap-2">
+            🗺️ 부스 배치도 보기
         </button>
 
         <!-- 아직 방문하지 않은 부스 (카드형, 클릭 가능) -->
@@ -1019,6 +1045,24 @@
     <!-- ══════════════════════════════════ -->
     <!-- 부스 상세 설명 모달                 -->
     <!-- ══════════════════════════════════ -->
+    <!-- ══════════════════════════════════ -->
+    <!-- 부스 배치도 모달                     -->
+    <!-- ══════════════════════════════════ -->
+    <div id="booth-map-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:50; align-items:center; justify-content:center; padding:16px;">
+        <div class="bg-white rounded-2xl w-full max-w-2xl overflow-hidden" style="max-height:92vh; display:flex; flex-direction:column;">
+            <div class="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+                <span class="font-bold text-gray-800">🗺️ 부스 배치도</span>
+                <button onclick="closeBoothMap()" class="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+            </div>
+            <div style="overflow:auto; padding:12px;">
+                <img id="booth-map-img" src="" alt="부스 배치도" style="width:100%; display:block; border-radius:8px;">
+            </div>
+            <div class="px-4 py-2 border-t border-gray-100">
+                <p class="text-xs text-gray-400 text-center">두 손가락으로 확대해서 보실 수 있어요</p>
+            </div>
+        </div>
+    </div>
+
     <div id="booth-detail-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:50; align-items:center; justify-content:center; padding:16px;">
         <div class="bg-white rounded-2xl w-full max-w-md overflow-hidden" style="max-height:90vh; overflow-y:auto;">
             <!-- 이미지 영역 -->
