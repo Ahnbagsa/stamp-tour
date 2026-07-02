@@ -729,7 +729,8 @@
             const labels = {
                 stamps: '부스 스캔 현황',
                 surveys: '설문 응답 데이터',
-                users: '참여자 목록 전체'
+                users: '참여자 목록 전체',
+                draws: '추첨 기록 전체'
             };
             document.getElementById('reset-type').value = type;
             document.getElementById('reset-label').innerText = labels[type];
@@ -765,14 +766,21 @@
                     const snap = await getDocs(collection(db, 'postSurveys'));
                     await Promise.all(snap.docs.map(d => deleteDoc(doc(db, 'postSurveys', d.id))));
                     alert('✅ 설문 응답 데이터가 초기화되었습니다.');
+                } else if (type === 'draws') {
+                    // draws 전체 삭제 (추첨 기록)
+                    const snap = await getDocs(collection(db, 'draws'));
+                    await Promise.all(snap.docs.map(d => deleteDoc(doc(db, 'draws', d.id))));
+                    alert('✅ 추첨 기록이 모두 삭제되었습니다.');
+                    await loadDrawHistory();
                 } else if (type === 'users') {
-                    // users + stampLogs + postSurveys + eventLogs 전체 삭제
-                    const cols = ['users','stampLogs','postSurveys','eventLogs'];
+                    // users + stampLogs + postSurveys + eventLogs + draws 전체 삭제
+                    const cols = ['users','stampLogs','postSurveys','eventLogs','draws'];
                     for (const col of cols) {
                         const snap = await getDocs(collection(db, col));
                         await Promise.all(snap.docs.map(d => deleteDoc(doc(db, col, d.id))));
                     }
                     alert('✅ 참여자 전체 데이터가 초기화되었습니다.');
+                    await loadDrawHistory();
                 }
                 closeResetModal();
                 await loadStats();
@@ -828,6 +836,65 @@
                     }
                 }
             } catch(e) { console.error('행사 설정 로드 실패:', e); }
+
+            await loadDisplaySettings();
+        }
+
+        // ─────────────────────────────────────
+        // 전광판 화면 설정 (테마 + 글씨 크기)
+        // ─────────────────────────────────────
+        let displayTheme = 'aurora';
+        const fsKeys = { title:'fs-title', notice:'fs-notice', cardTitle:'fs-cardtitle',
+                         content:'fs-content', number:'fs-number', nickname:'fs-nickname' };
+
+        window.selectDisplayTheme = function(theme) {
+            displayTheme = theme;
+            ['aurora','light'].forEach(t => {
+                const el = document.getElementById('theme-btn-' + t);
+                if (!el) return;
+                if (t === theme) {
+                    el.classList.add('draw-selected');
+                    el.classList.remove('border-gray-300','bg-gray-50','text-gray-600');
+                } else {
+                    el.classList.remove('draw-selected');
+                    el.classList.add('border-gray-300','bg-gray-50','text-gray-600');
+                }
+            });
+        }
+
+        window.saveDisplaySettings = async function() {
+            const fontScale = {};
+            Object.entries(fsKeys).forEach(([k, id]) => {
+                fontScale[k] = (parseInt(document.getElementById(id + '-input').value) || 100) / 100;
+            });
+            const btn = document.getElementById('btn-save-display');
+            btn.disabled = true; btn.innerText = '저장 중...';
+            try {
+                await setDoc(doc(db, 'settings', 'display'), {
+                    theme: displayTheme,
+                    fontScale: fontScale,
+                    updated_at: new Date()
+                });
+                alert('✅ 전광판 설정이 저장되었습니다!\n전광판 화면에 즉시 반영됩니다.');
+            } catch(e) { alert('저장 오류: ' + e.message); }
+            btn.disabled = false; btn.innerText = '💾 전광판 설정 저장';
+        }
+
+        async function loadDisplaySettings() {
+            try {
+                const snap = await getDoc(doc(db, 'settings', 'display'));
+                if (!snap.exists()) return;
+                const data = snap.data();
+                if (data.theme) selectDisplayTheme(data.theme);
+                const fs = data.fontScale || {};
+                Object.entries(fsKeys).forEach(([k, id]) => {
+                    const pct = Math.round((fs[k] || 1) * 100);
+                    const input = document.getElementById(id + '-input');
+                    const val = document.getElementById(id + '-val');
+                    if (input) input.value = pct;
+                    if (val) val.innerText = pct + '%';
+                });
+            } catch(e) { console.error('전광판 설정 로드 실패:', e); }
         }
 
         window.saveEventSettings = async function() {
@@ -1141,7 +1208,11 @@
                     return `<div class="border border-gray-200 rounded-xl p-3">
                         <div class="flex items-center justify-between mb-2">
                             <span class="text-xs font-bold text-gray-600">${dr.label || '추첨'}</span>
-                            <span class="text-xs text-gray-400">${time}${dr.active ? ' · <span class="text-green-500 font-bold">전광판 표시중</span>' : ''}</span>
+                            <div class="flex items-center gap-2">
+                                <span class="text-xs text-gray-400">${time}${dr.active ? ' · <span class="text-green-500 font-bold">전광판 표시중</span>' : ''}</span>
+                                <button onclick="deleteDrawRecord('${dr.id}')"
+                                    class="text-red-300 hover:text-red-500 text-xs px-1" title="이 기록 삭제">🗑️</button>
+                            </div>
                         </div>
                         <div class="flex flex-col gap-1.5">
                             ${(dr.winners||[]).map(w => `
@@ -1157,6 +1228,15 @@
                     </div>`;
                 }).join('');
             } catch(e) { console.error('추첨 기록 로드 실패:', e); }
+        }
+
+        // 추첨 기록 개별 삭제
+        window.deleteDrawRecord = async function(drawId) {
+            if (!confirm('이 추첨 기록을 삭제하시겠습니까?\n(전광판에 표시 중이면 함께 내려갑니다)')) return;
+            try {
+                await deleteDoc(doc(db, 'draws', drawId));
+                await loadDrawHistory();
+            } catch(e) { alert('삭제 실패: ' + e.message); }
         }
 
         window.toggleClaim = async function(drawId, winner, checked) {
@@ -1322,6 +1402,71 @@
                 </button>
             </div>
 
+            <!-- 전광판 화면 설정 -->
+            <div class="bg-white rounded-2xl shadow p-5 mb-4">
+                <h2 class="font-bold text-gray-700 mb-1">🖥️ 전광판 화면 설정</h2>
+                <p class="text-xs text-gray-400 mb-4">저장하면 전광판(display.html)에 <span class="font-bold text-indigo-500">새로고침 없이 즉시 반영</span>됩니다. 실제 화면을 보면서 조절하세요.</p>
+
+                <label class="block text-sm font-bold text-gray-700 mb-2">테마</label>
+                <div class="grid grid-cols-2 gap-2 mb-5">
+                    <button id="theme-btn-aurora" onclick="selectDisplayTheme('aurora')"
+                        class="draw-selected rounded-lg py-3 px-3 text-sm border text-left">
+                        <span class="font-bold">🌌 오로라 다크</span><br>
+                        <span class="text-xs opacity-70">보라·청록 그라데이션 (LED 추천)</span>
+                    </button>
+                    <button id="theme-btn-light" onclick="selectDisplayTheme('light')"
+                        class="rounded-lg py-3 px-3 text-sm border border-gray-300 bg-gray-50 text-gray-600 text-left">
+                        <span class="font-bold">☀️ 클린 라이트</span><br>
+                        <span class="text-xs opacity-70">밝고 친근한 교육 감성</span>
+                    </button>
+                </div>
+
+                <label class="block text-sm font-bold text-gray-700 mb-2">글씨 크기</label>
+                <div class="flex flex-col gap-2.5 mb-4">
+                    <div class="flex items-center gap-3">
+                        <span class="text-xs text-gray-600 w-16 flex-shrink-0">행사명</span>
+                        <input id="fs-title-input" type="range" min="70" max="200" step="5" value="100" class="flex-1"
+                            oninput="document.getElementById('fs-title-val').innerText=this.value+'%'">
+                        <span id="fs-title-val" class="text-xs font-bold text-indigo-600 w-11 text-right">100%</span>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <span class="text-xs text-gray-600 w-16 flex-shrink-0">공지사항</span>
+                        <input id="fs-notice-input" type="range" min="70" max="200" step="5" value="100" class="flex-1"
+                            oninput="document.getElementById('fs-notice-val').innerText=this.value+'%'">
+                        <span id="fs-notice-val" class="text-xs font-bold text-indigo-600 w-11 text-right">100%</span>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <span class="text-xs text-gray-600 w-16 flex-shrink-0">섹션 제목</span>
+                        <input id="fs-cardtitle-input" type="range" min="70" max="200" step="5" value="100" class="flex-1"
+                            oninput="document.getElementById('fs-cardtitle-val').innerText=this.value+'%'">
+                        <span id="fs-cardtitle-val" class="text-xs font-bold text-indigo-600 w-11 text-right">100%</span>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <span class="text-xs text-gray-600 w-16 flex-shrink-0">내용·차트</span>
+                        <input id="fs-content-input" type="range" min="70" max="200" step="5" value="100" class="flex-1"
+                            oninput="document.getElementById('fs-content-val').innerText=this.value+'%'">
+                        <span id="fs-content-val" class="text-xs font-bold text-indigo-600 w-11 text-right">100%</span>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <span class="text-xs text-gray-600 w-16 flex-shrink-0">통계 숫자</span>
+                        <input id="fs-number-input" type="range" min="70" max="200" step="5" value="100" class="flex-1"
+                            oninput="document.getElementById('fs-number-val').innerText=this.value+'%'">
+                        <span id="fs-number-val" class="text-xs font-bold text-indigo-600 w-11 text-right">100%</span>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <span class="text-xs text-gray-600 w-16 flex-shrink-0">닉네임</span>
+                        <input id="fs-nickname-input" type="range" min="70" max="200" step="5" value="100" class="flex-1"
+                            oninput="document.getElementById('fs-nickname-val').innerText=this.value+'%'">
+                        <span id="fs-nickname-val" class="text-xs font-bold text-indigo-600 w-11 text-right">100%</span>
+                    </div>
+                </div>
+
+                <button id="btn-save-display" onclick="saveDisplaySettings()"
+                    class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 rounded-lg text-sm">
+                    💾 전광판 설정 저장
+                </button>
+            </div>
+
             <!-- 시작 화면(인트로) 설정 -->
             <div class="bg-white rounded-2xl shadow p-5 mb-4">
                 <h2 class="font-bold text-gray-700 mb-1">🖼️ 시작 화면(포스터) 설정</h2>
@@ -1461,7 +1606,11 @@
 
             <!-- 추첨 기록 & 상품 지급 확인 -->
             <div class="bg-white rounded-2xl shadow p-5">
-                <h2 class="font-bold text-gray-700 mb-1">📜 추첨 기록 & 상품 지급 확인</h2>
+                <div class="flex items-center justify-between mb-1">
+                    <h2 class="font-bold text-gray-700">📜 추첨 기록 & 상품 지급 확인</h2>
+                    <button onclick="confirmReset('draws')"
+                        class="text-xs text-red-400 hover:text-red-600 border border-red-200 rounded px-2 py-1">🗑️ 전체 삭제</button>
+                </div>
                 <p class="text-xs text-gray-400 mb-4">당첨자가 상품을 받아가면 체크하세요. 중복 수령을 막을 수 있습니다.</p>
                 <div id="draw-history" class="flex flex-col gap-3">
                     <p class="text-gray-400 text-sm text-center py-2">추첨 기록이 없습니다.</p>

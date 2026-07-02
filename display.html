@@ -30,13 +30,31 @@
             snap.forEach(d => { boothNames[d.data().code] = d.data().name; });
         }
 
-        // 행사 설정 로드 (행사명 + 메달 기준)
+        // 행사 설정 + 전광판 설정 — 실시간 반영 (admin에서 저장하면 즉시 적용)
         let displayTiers = { bronze: 3, silver: 6, gold: 9 };
-        async function loadEventName() {
-            try {
-                const snap = await getDocs(collection(db, 'settings'));
-                snap.forEach(d => {
-                    if (d.id !== 'event') return;
+        let particleColors = { a:'167,139,250', b:'94,234,212', star:'196,181,253', glow:'139,92,246' };
+
+        function applyDisplaySettings(data) {
+            // 테마
+            const theme = data.theme || 'aurora';
+            document.body.classList.toggle('theme-light', theme === 'light');
+            particleColors = theme === 'light'
+                ? { a:'99,102,241',  b:'13,148,136', star:'129,140,248', glow:'99,102,241' }
+                : { a:'167,139,250', b:'94,234,212', star:'196,181,253', glow:'139,92,246' };
+            // 글씨 크기
+            const fs = data.fontScale || {};
+            const r = document.documentElement.style;
+            r.setProperty('--fs-title',     fs.title    || 1);
+            r.setProperty('--fs-notice',    fs.notice   || 1);
+            r.setProperty('--fs-cardtitle', fs.cardTitle|| 1);
+            r.setProperty('--fs-content',   fs.content  || 1);
+            r.setProperty('--fs-number',    fs.number   || 1);
+            r.setProperty('--fs-nickname',  fs.nickname || 1);
+        }
+
+        onSnapshot(collection(db, 'settings'), snap => {
+            snap.forEach(d => {
+                if (d.id === 'event') {
                     const data = d.data();
                     if (data.eventName) {
                         document.getElementById('event-title').textContent = data.eventName;
@@ -52,10 +70,10 @@
                         document.getElementById('tier-silver-label').textContent = `은메달 (${displayTiers.silver}개 달성)`;
                         document.getElementById('tier-gold-label').textContent = `금메달 (${displayTiers.gold}개 달성)`;
                     }
-                });
-            } catch(e) { console.error('행사 설정 로드 실패:', e); }
-        }
-        loadEventName();
+                }
+                if (d.id === 'display') applyDisplaySettings(d.data());
+            });
+        });
 
         // 실시간 사용자 → 참여자 수 / 닉네임 / 참여대상 / 스탬프 달성
         onSnapshot(collection(db, 'users'), snap => {
@@ -324,7 +342,7 @@
         }
 
         function renderTargetChart(data, total) {
-            const colors = ['#00d4ff','#7b61ff','#ff6b9d','#ffd166','#06d6a0'];
+            const colors = ['#8b5cf6','#14b8a6','#ec4899','#f59e0b','#3b82f6'];
             const entries = Object.entries(data).sort((a,b)=>b[1]-a[1]);
             document.getElementById('target-chart').innerHTML = entries.map(([label, cnt], i) => {
                 const pct = total > 0 ? Math.round(cnt/total*100) : 0;
@@ -338,7 +356,7 @@
         }
 
         function renderPreChart(data, total) {
-            const colors = ['#00d4ff','#7b61ff','#ff6b9d','#ffd166'];
+            const colors = ['#8b5cf6','#14b8a6','#ec4899','#f59e0b'];
             const entries = Object.entries(data).sort((a,b)=>b[1]-a[1]);
             document.getElementById('pre-chart').innerHTML = entries.map(([label, cnt], i) => {
                 const pct = total > 0 ? Math.round(cnt/total*100) : 0;
@@ -428,7 +446,8 @@
                     speed: (Math.random() * 0.0006 + 0.0002) * (Math.random() < 0.5 ? 1 : -1),
                     pulse: Math.random() * Math.PI * 2,
                     pulseSpeed: Math.random() * 0.02 + 0.01,
-                    isStar: Math.random() < 0.12
+                    isStar: Math.random() < 0.12,
+                    toneKey: Math.random() < 0.5 ? 'a' : 'b'
                 });
             }
 
@@ -437,8 +456,8 @@
 
                 // 중심 글로우
                 const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
-                grad.addColorStop(0, 'rgba(0,180,255,0.18)');
-                grad.addColorStop(0.5, 'rgba(0,120,220,0.06)');
+                grad.addColorStop(0, `rgba(${particleColors.glow},0.18)`);
+                grad.addColorStop(0.5, `rgba(${particleColors.glow},0.06)`);
                 grad.addColorStop(1, 'rgba(0,0,0,0)');
                 ctx.fillStyle = grad;
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -454,15 +473,15 @@
 
                     if (p.isStar) {
                         // 별 모양 (작은 십자 반짝임)
-                        ctx.fillStyle = `rgba(150,230,255,${alpha})`;
+                        ctx.fillStyle = `rgba(${particleColors.star},${alpha})`;
                         ctx.fillRect(x - p.size, y - 0.4, p.size * 2, 0.8);
                         ctx.fillRect(x - 0.4, y - p.size, 0.8, p.size * 2);
                     } else {
                         ctx.beginPath();
                         ctx.arc(x, y, p.size, 0, Math.PI * 2);
-                        ctx.fillStyle = `rgba(90,200,255,${alpha})`;
+                        ctx.fillStyle = `rgba(${particleColors[p.toneKey]},${alpha})`;
                         ctx.shadowBlur = 6;
-                        ctx.shadowColor = 'rgba(0,200,255,0.6)';
+                        ctx.shadowColor = `rgba(${particleColors[p.toneKey]},0.6)`;
                         ctx.fill();
                         ctx.shadowBlur = 0;
                     }
@@ -478,57 +497,212 @@
 
     <style>
         * { margin:0; padding:0; box-sizing:border-box; }
+
+        /* ══ 테마 변수 — 기본: 오로라 다크 ══ */
         body {
-            background:#020818; color:#e0f0ff;
+            --bg-page:#0a0a14;
+            --grid-line:rgba(167,139,250,0.04);
+            --header-bg:rgba(18,14,40,0.7);
+            --header-border:rgba(167,139,250,0.25);
+            --badge-bg:linear-gradient(135deg,#7c3aed,#14b8a6);
+            --title-grad:linear-gradient(90deg,#c4b5fd,#5eead4);
+            --sub-text:rgba(196,181,253,0.55);
+            --live:#5eead4;
+            --clock:#c4b5fd;
+            --clock-glow:0 0 15px rgba(167,139,250,0.6);
+            --notice-bg:linear-gradient(90deg,rgba(88,60,160,0.45),rgba(40,30,90,0.4),rgba(88,60,160,0.45));
+            --notice-border:rgba(167,139,250,0.35);
+            --notice-label-bg:rgba(139,92,246,0.3);
+            --notice-label-border:rgba(196,181,253,0.5);
+            --notice-label-text:#fff;
+            --notice-label-glow:0 0 8px rgba(167,139,250,0.6);
+            --notice-text:#e9d5ff;
+            --card-bg:rgba(22,17,48,0.72);
+            --card-border:rgba(167,139,250,0.18);
+            --card-topline:#a78bfa;
+            --card-title:rgba(196,181,253,0.75);
+            --stat-box-bg:rgba(167,139,250,0.06);
+            --stat-box-border:rgba(167,139,250,0.12);
+            --stat-label:rgba(216,200,255,0.6);
+            --stat-value:#c4b5fd;
+            --stat-glow:0 0 20px rgba(167,139,250,0.5);
+            --stat-unit:rgba(196,181,253,0.5);
+            --chart-label:#cbd0f0;
+            --chart-track:rgba(255,255,255,0.07);
+            --chart-pct:#5eead4;
+            --booth-name:#d6d3f5;
+            --bar-a:#7c3aed; --bar-b:#5eead4;
+            --bar-glow:0 0 8px rgba(94,234,212,0.35);
+            --booth-count:#5eead4;
+            --tier-row-bg:rgba(167,139,250,0.05);
+            --tier-row-border:rgba(167,139,250,0.12);
+            --tier-name:rgba(216,200,255,0.65);
+            --medal-bronze:#cd7f32; --medal-bronze-glow:0 0 10px rgba(205,127,50,0.4);
+            --medal-silver:#c0c0c0; --medal-silver-glow:0 0 10px rgba(192,192,192,0.4);
+            --medal-gold:#ffd166;   --medal-gold-glow:0 0 10px rgba(255,209,102,0.4);
+            --hud-bg:radial-gradient(ellipse at 30% 25%, rgba(124,58,237,0.28) 0%, transparent 55%),
+                     radial-gradient(ellipse at 72% 75%, rgba(20,184,166,0.22) 0%, transparent 55%),
+                     rgba(10,8,24,0.92);
+            --hud-border:rgba(167,139,250,0.35);
+            --hud-title:#c4b5fd;
+            --hud-glow:0 0 12px rgba(167,139,250,0.5);
+            --hud-sub:rgba(167,139,250,0.5);
+            --nick-border:rgba(167,139,250,0.4);
+            --nick-bg:rgba(20,14,40,0.45);
+            --nick-shadow:0 0 8px rgba(167,139,250,0.2);
+            --nick-sm:#c4b5fd;
+            --nick-md:#ddd6fe;
+            --nick-lg:#ffffff;
+            --nick-lg-border:rgba(94,234,212,0.65);
+            --nick-lg-bg:rgba(94,234,212,0.10);
+            --nmw-text:#fff;
+            --nmw-border:rgba(255,209,102,0.9);
+            --nmw-bg:rgba(255,209,102,0.15);
+            --nmw-shadow:0 0 28px rgba(255,209,102,0.7);
+            --empty-text:rgba(196,181,253,0.35);
+            --winner-bg:rgba(6,4,18,0.93);
+            --winner-head:#ffd166;
+            --winner-head-glow:0 0 20px rgba(255,209,102,0.6);
+            --winner-sub-color:#a5f3e8;
+            --winner-row-bg:linear-gradient(90deg,rgba(255,209,102,0.12),rgba(124,58,237,0.10));
+            --winner-row-border:rgba(255,209,102,0.5);
+            --winner-name:#fff;
+            --winner-name-glow:0 0 24px rgba(167,139,250,0.5);
+            --winner-note:#8b87b8;
+            --scan:rgba(167,139,250,0.28);
+            --text-main:#ece9ff;
+        }
+
+        /* ══ 클린 라이트 테마 ══ */
+        body.theme-light {
+            --bg-page:#eef1f7;
+            --grid-line:rgba(79,70,229,0.05);
+            --header-bg:#ffffff;
+            --header-border:#e2e8f0;
+            --badge-bg:#4f46e5;
+            --title-grad:linear-gradient(90deg,#4f46e5,#0d9488);
+            --sub-text:#94a3b8;
+            --live:#0d9488;
+            --clock:#4f46e5;
+            --clock-glow:none;
+            --notice-bg:#eef2ff;
+            --notice-border:#c7d2fe;
+            --notice-label-bg:#4f46e5;
+            --notice-label-border:#4f46e5;
+            --notice-label-text:#fff;
+            --notice-label-glow:none;
+            --notice-text:#312e81;
+            --card-bg:#ffffff;
+            --card-border:#e2e8f0;
+            --card-topline:#6366f1;
+            --card-title:#64748b;
+            --stat-box-bg:#f1f5f9;
+            --stat-box-border:#e2e8f0;
+            --stat-label:#64748b;
+            --stat-value:#4f46e5;
+            --stat-glow:none;
+            --stat-unit:#94a3b8;
+            --chart-label:#475569;
+            --chart-track:#e2e8f0;
+            --chart-pct:#0d9488;
+            --booth-name:#334155;
+            --bar-a:#6366f1; --bar-b:#14b8a6;
+            --bar-glow:none;
+            --booth-count:#0d9488;
+            --tier-row-bg:#f8fafc;
+            --tier-row-border:#e2e8f0;
+            --tier-name:#64748b;
+            --medal-bronze:#b45309; --medal-bronze-glow:none;
+            --medal-silver:#64748b; --medal-silver-glow:none;
+            --medal-gold:#d97706;   --medal-gold-glow:none;
+            --hud-bg:radial-gradient(ellipse at 30% 25%, rgba(99,102,241,0.10) 0%, transparent 55%),
+                     radial-gradient(ellipse at 72% 75%, rgba(13,148,136,0.08) 0%, transparent 55%),
+                     #ffffff;
+            --hud-border:#c7d2fe;
+            --hud-title:#4f46e5;
+            --hud-glow:none;
+            --hud-sub:#94a3b8;
+            --nick-border:#c7d2fe;
+            --nick-bg:#ffffff;
+            --nick-shadow:0 1px 3px rgba(30,41,59,0.10);
+            --nick-sm:#6366f1;
+            --nick-md:#4f46e5;
+            --nick-lg:#ffffff;
+            --nick-lg-border:#4f46e5;
+            --nick-lg-bg:#4f46e5;
+            --nmw-text:#92400e;
+            --nmw-border:#d97706;
+            --nmw-bg:rgba(217,119,6,0.12);
+            --nmw-shadow:0 0 20px rgba(217,119,6,0.35);
+            --empty-text:#94a3b8;
+            --winner-bg:rgba(241,245,249,0.97);
+            --winner-head:#d97706;
+            --winner-head-glow:none;
+            --winner-sub-color:#0d9488;
+            --winner-row-bg:linear-gradient(90deg,#fef3c7,#eef2ff);
+            --winner-row-border:#fbbf24;
+            --winner-name:#1e293b;
+            --winner-name-glow:none;
+            --winner-note:#64748b;
+            --scan:rgba(99,102,241,0.12);
+            --text-main:#1e293b;
+        }
+
+        body {
+            background:var(--bg-page); color:var(--text-main);
             font-family:'Noto Sans KR',sans-serif;
             width:100vw; height:100vh; overflow:hidden; position:relative;
+            transition:background 0.5s ease;
         }
         body::before {
             content:''; position:fixed; inset:0;
             background-image:
-                linear-gradient(rgba(0,212,255,0.03) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(0,212,255,0.03) 1px, transparent 1px);
+                linear-gradient(var(--grid-line) 1px, transparent 1px),
+                linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
             background-size:60px 60px; pointer-events:none;
         }
 
         /* 헤더 */
         .header {
             display:flex; align-items:center; justify-content:space-between;
-            padding:12px 32px; border-bottom:1px solid rgba(0,212,255,0.2);
-            background:rgba(0,20,60,0.6); position:relative; z-index:10;
+            padding:12px 32px; border-bottom:1px solid var(--header-border);
+            background:var(--header-bg); position:relative; z-index:10;
         }
         .ai-badge {
-            background:linear-gradient(135deg,#0047ff,#00d4ff); color:#fff;
+            background:var(--badge-bg); color:#fff;
             font-family:'Orbitron',monospace; font-size:11px; font-weight:700;
             padding:4px 10px; border-radius:4px; letter-spacing:2px;
         }
         .event-title {
-            font-family:'Orbitron',monospace; font-size:22px; font-weight:700;
-            color:#00d4ff; text-shadow:0 0 20px rgba(0,212,255,0.5); letter-spacing:1px;
+            font-family:'Orbitron',monospace; font-weight:700;
+            font-size:calc(22px * var(--fs-title,1));
+            background:var(--title-grad);
+            -webkit-background-clip:text; background-clip:text; color:transparent;
+            letter-spacing:1px;
         }
-        .event-sub { font-size:12px; color:rgba(0,212,255,0.6); margin-top:2px; letter-spacing:3px; }
+        .event-sub { font-size:calc(12px * var(--fs-title,1)); color:var(--sub-text); margin-top:2px; letter-spacing:3px; }
         .header-right { display:flex; align-items:center; gap:20px; }
         .clock {
             font-family:'Orbitron',monospace; font-size:26px; font-weight:700;
-            color:#00d4ff; text-shadow:0 0 15px rgba(0,212,255,0.6);
+            color:var(--clock); text-shadow:var(--clock-glow);
         }
-        .live-badge { display:flex; align-items:center; gap:6px; font-size:12px; color:#06d6a0; font-weight:700; letter-spacing:2px; }
-        .live-dot { width:8px; height:8px; background:#06d6a0; border-radius:50%; animation:blink 1s infinite; }
+        .live-badge { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--live); font-weight:700; letter-spacing:2px; }
+        .live-dot { width:8px; height:8px; background:var(--live); border-radius:50%; animation:blink 1s infinite; }
         @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
 
         /* 공지 */
         .notice-bar {
-            background:linear-gradient(90deg,rgba(0,60,120,0.6),rgba(0,40,90,0.5),rgba(0,60,120,0.6));
-            border-bottom:2px solid rgba(0,212,255,0.3); padding:13px 32px;
+            background:var(--notice-bg);
+            border-bottom:2px solid var(--notice-border); padding:13px 32px;
             display:flex; align-items:center; gap:16px; overflow:hidden;
         }
         .notice-label {
-            font-family:'Orbitron',monospace; font-size:11px; font-weight:700; color:#fff;
-            letter-spacing:3px; white-space:nowrap; background:rgba(0,180,255,0.25);
-            border:1px solid rgba(0,212,255,0.5); padding:5px 14px; border-radius:4px;
-            text-shadow:0 0 8px rgba(0,212,255,0.6); flex-shrink:0;
+            font-family:'Orbitron',monospace; font-size:11px; font-weight:700; color:var(--notice-label-text);
+            letter-spacing:3px; white-space:nowrap; background:var(--notice-label-bg);
+            border:1px solid var(--notice-label-border); padding:5px 14px; border-radius:4px;
+            text-shadow:var(--notice-label-glow); flex-shrink:0;
         }
-        #notice-text { font-size:20px; font-weight:700; color:#d0edff; transition:opacity 0.6s ease; }
+        #notice-text { font-size:calc(20px * var(--fs-notice,1)); font-weight:700; color:var(--notice-text); transition:opacity 0.6s ease; }
 
         /* 메인 3단 그리드 */
         .main-grid {
@@ -538,114 +712,113 @@
         .col { display:flex; flex-direction:column; gap:14px; }
 
         .card {
-            background:rgba(5,20,50,0.7); border:1px solid rgba(0,212,255,0.15);
+            background:var(--card-bg); border:1px solid var(--card-border);
             border-radius:12px; padding:16px 18px; position:relative; overflow:hidden;
         }
         .card::before {
             content:''; position:absolute; top:0; left:0; right:0; height:2px;
-            background:linear-gradient(90deg,transparent,#00d4ff,transparent);
+            background:linear-gradient(90deg,transparent,var(--card-topline),transparent);
         }
         .card-title {
-            font-family:'Orbitron',monospace; font-size:11px; color:rgba(0,212,255,0.7);
+            font-family:'Orbitron',monospace; font-size:calc(11px * var(--fs-cardtitle,1)); color:var(--card-title);
             letter-spacing:2px; margin-bottom:12px; display:flex; align-items:center; gap:6px;
         }
-        .card-title::before { content:''; width:3px; height:14px; background:#00d4ff; border-radius:2px; }
+        .card-title::before { content:''; width:3px; height:14px; background:var(--card-topline); border-radius:2px; }
 
         /* 통계 카드 */
         .stat-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
         .stat-box {
-            background:rgba(0,212,255,0.05); border:1px solid rgba(0,212,255,0.1);
+            background:var(--stat-box-bg); border:1px solid var(--stat-box-border);
             border-radius:8px; padding:12px; text-align:center;
         }
-        .stat-label { font-size:11px; color:rgba(160,212,255,0.6); margin-bottom:6px; }
+        .stat-label { font-size:calc(11px * var(--fs-content,1)); color:var(--stat-label); margin-bottom:6px; }
         .stat-value {
-            font-family:'Orbitron',monospace; font-size:32px; font-weight:900;
-            color:#00d4ff; text-shadow:0 0 20px rgba(0,212,255,0.5); line-height:1;
+            font-family:'Orbitron',monospace; font-size:calc(32px * var(--fs-number,1)); font-weight:900;
+            color:var(--stat-value); text-shadow:var(--stat-glow); line-height:1;
         }
-        .stat-unit { font-size:11px; color:rgba(0,212,255,0.5); margin-top:4px; }
+        .stat-unit { font-size:calc(11px * var(--fs-content,1)); color:var(--stat-unit); margin-top:4px; }
         @keyframes pop { 0%{transform:scale(1.25)} 100%{transform:scale(1)} }
         .pop { animation:pop 0.3s ease-out; }
 
         /* 차트 공통 */
         .pie-row { display:flex; align-items:center; gap:8px; margin-bottom:9px; }
         .pie-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
-        .pie-label { font-size:13px; color:#a0c8e8; width:90px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-        .pie-bar-wrap { flex:1; height:7px; background:rgba(255,255,255,0.06); border-radius:4px; overflow:hidden; }
-        .pie-bar { height:100%; border-radius:4px; transition:width 1s ease; opacity:0.85; }
-        .pie-pct { font-family:'Orbitron',monospace; font-size:13px; color:#00d4ff; width:40px; text-align:right; }
-        .no-data, .hud-empty { font-size:13px; color:rgba(160,212,255,0.3); text-align:center; margin-top:20px; }
+        .pie-label { font-size:calc(13px * var(--fs-content,1)); color:var(--chart-label); width:calc(90px * var(--fs-content,1)); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .pie-bar-wrap { flex:1; height:7px; background:var(--chart-track); border-radius:4px; overflow:hidden; }
+        .pie-bar { height:100%; border-radius:4px; transition:width 1s ease; opacity:0.9; }
+        .pie-pct { font-family:'Orbitron',monospace; font-size:calc(13px * var(--fs-content,1)); color:var(--chart-pct); width:calc(42px * var(--fs-content,1)); text-align:right; }
+        .no-data, .hud-empty { font-size:13px; color:var(--empty-text); text-align:center; margin-top:20px; }
 
         /* 인기 부스 */
         .booth-row { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
         .booth-medal { font-size:18px; width:26px; }
-        .booth-name { font-size:14px; color:#c0e0ff; width:110px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-        .booth-bar-wrap { flex:1; height:8px; background:rgba(0,212,255,0.1); border-radius:4px; overflow:hidden; }
-        .booth-bar { height:100%; background:linear-gradient(90deg,#0047ff,#00d4ff); border-radius:4px; transition:width 1s ease; box-shadow:0 0 8px rgba(0,212,255,0.4); }
-        .booth-count { font-family:'Orbitron',monospace; font-size:16px; font-weight:700; color:#00d4ff; width:34px; text-align:right; }
+        .booth-name { font-size:calc(14px * var(--fs-content,1)); color:var(--booth-name); width:calc(110px * var(--fs-content,1)); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .booth-bar-wrap { flex:1; height:8px; background:var(--chart-track); border-radius:4px; overflow:hidden; }
+        .booth-bar { height:100%; background:linear-gradient(90deg,var(--bar-a),var(--bar-b)); border-radius:4px; transition:width 1s ease; box-shadow:var(--bar-glow); }
+        .booth-count { font-family:'Orbitron',monospace; font-size:calc(16px * var(--fs-number,1)); font-weight:700; color:var(--booth-count); width:calc(34px * var(--fs-number,1)); text-align:right; }
 
         /* 스탬프 달성 */
         .tier-list { display:flex; flex-direction:column; gap:10px; }
         .tier-row {
             display:flex; align-items:center; gap:12px;
-            background:rgba(0,212,255,0.04); border:1px solid rgba(0,212,255,0.1);
+            background:var(--tier-row-bg); border:1px solid var(--tier-row-border);
             border-radius:8px; padding:10px 14px;
         }
         .tier-icon { font-size:22px; }
         .tier-info { flex:1; }
-        .tier-name { font-size:12px; color:rgba(160,212,255,0.7); }
-        .tier-val { font-family:'Orbitron',monospace; font-size:26px; font-weight:900; line-height:1; }
-        .tier-val.bronze { color:#cd7f32; text-shadow:0 0 10px rgba(205,127,50,0.4); }
-        .tier-val.silver { color:#c0c0c0; text-shadow:0 0 10px rgba(192,192,192,0.4); }
-        .tier-val.gold { color:#ffd166; text-shadow:0 0 10px rgba(255,209,102,0.4); }
-        .tier-unit { font-size:11px; color:rgba(160,212,255,0.4); }
+        .tier-name { font-size:calc(12px * var(--fs-content,1)); color:var(--tier-name); }
+        .tier-val { font-family:'Orbitron',monospace; font-size:calc(26px * var(--fs-number,1)); font-weight:900; line-height:1; }
+        .tier-val.bronze { color:var(--medal-bronze); text-shadow:var(--medal-bronze-glow); }
+        .tier-val.silver { color:var(--medal-silver); text-shadow:var(--medal-silver-glow); }
+        .tier-val.gold { color:var(--medal-gold); text-shadow:var(--medal-gold-glow); }
+        .tier-unit { font-size:calc(11px * var(--fs-content,1)); color:var(--tier-name); }
 
         /* 중앙 닉네임 HUD */
         .hud-card {
             flex:1; display:flex; flex-direction:column;
-            background:radial-gradient(ellipse at center, rgba(0,70,140,0.35) 0%, rgba(3,16,40,0.9) 70%);
-            border:1px solid rgba(0,212,255,0.3);
+            background:var(--hud-bg);
+            border:1px solid var(--hud-border);
             border-radius:12px; padding:18px; position:relative; overflow:hidden;
         }
         .hud-card::before {
             content:''; position:absolute; top:0; left:0; right:0; height:2px;
-            background:linear-gradient(90deg,transparent,#00d4ff,transparent); z-index:5;
+            background:linear-gradient(90deg,transparent,var(--card-topline),transparent); z-index:5;
         }
-        /* 입자 캔버스 (배경) */
         #particle-canvas {
             position:absolute; inset:0; width:100%; height:100%; z-index:0;
         }
         .hud-title {
-            font-family:'Orbitron',monospace; font-size:13px; color:#5ed4ff;
+            font-family:'Orbitron',monospace; font-size:calc(13px * var(--fs-cardtitle,1)); color:var(--hud-title);
             letter-spacing:3px; text-align:center; margin-bottom:4px;
-            text-shadow:0 0 12px rgba(0,212,255,0.5); position:relative; z-index:5;
+            text-shadow:var(--hud-glow); position:relative; z-index:5;
         }
-        .hud-subtitle { font-size:11px; color:rgba(0,212,255,0.5); text-align:center; letter-spacing:2px; margin-bottom:16px; position:relative; z-index:5; }
+        .hud-subtitle { font-size:calc(11px * var(--fs-cardtitle,1)); color:var(--hud-sub); text-align:center; letter-spacing:2px; margin-bottom:16px; position:relative; z-index:5; }
         .nickname-cloud {
             flex:1; position:relative; overflow:hidden; z-index:2;
         }
         .nickname {
             position:absolute;
-            border:1px solid rgba(0,212,255,0.35); border-radius:20px;
-            padding:4px 12px; color:#7fe3ff; white-space:nowrap;
-            backdrop-filter:blur(2px); background:rgba(3,16,40,0.4);
+            border:1px solid var(--nick-border); border-radius:20px;
+            padding:4px 12px; color:var(--nick-sm); white-space:nowrap;
+            backdrop-filter:blur(2px); background:var(--nick-bg);
             transform: translate(-50%, -50%);
             transition: opacity 0.5s ease, color 0.4s ease, box-shadow 0.4s ease;
-            box-shadow:0 0 8px rgba(0,212,255,0.2);
+            box-shadow:var(--nick-shadow);
             will-change: left, top;
         }
-        .nm-sm { font-size:13px; opacity:0.78; }
-        .nm-md { font-size:16px; color:#9fd4ff; }
-        .nm-lg { font-size:19px; color:#fff; border-color:rgba(0,212,255,0.6); background:rgba(0,140,255,0.12); }
+        .nm-sm { font-size:calc(13px * var(--fs-nickname,1)); opacity:0.82; }
+        .nm-md { font-size:calc(16px * var(--fs-nickname,1)); color:var(--nick-md); }
+        .nm-lg { font-size:calc(19px * var(--fs-nickname,1)); color:var(--nick-lg); border-color:var(--nick-lg-border); background:var(--nick-lg-bg); }
         .nm-winner {
-            font-size:28px !important; color:#fff !important; font-weight:700;
-            border-color:rgba(255,209,102,0.9) !important;
-            background:rgba(255,209,102,0.15) !important;
-            box-shadow:0 0 28px rgba(255,209,102,0.7) !important;
+            font-size:calc(28px * var(--fs-nickname,1)) !important; color:var(--nmw-text) !important; font-weight:700;
+            border-color:var(--nmw-border) !important;
+            background:var(--nmw-bg) !important;
+            box-shadow:var(--nmw-shadow) !important;
             z-index:20;
         }
         .hud-empty {
             position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
-            font-size:13px; color:rgba(160,212,255,0.4); z-index:3;
+            font-size:13px; color:var(--empty-text); z-index:3;
         }
 
         /* 추첨 배너 (HUD 상단) */
@@ -654,44 +827,44 @@
             align-items:center; justify-content:center;
         }
         .draw-banner-inner {
-            font-family:'Orbitron',monospace; font-size:16px; font-weight:700; color:#ffd166;
-            letter-spacing:2px; text-shadow:0 0 16px rgba(255,209,102,0.7);
+            font-family:'Orbitron',monospace; font-size:16px; font-weight:700; color:var(--winner-head);
+            letter-spacing:2px; text-shadow:var(--winner-head-glow);
             animation:winnerPulse 1s ease-in-out infinite;
         }
 
         /* 추첨 당첨자 오버레이 */
         .winner-overlay {
             display:none; position:fixed; inset:0; z-index:100;
-            background:rgba(2,8,24,0.92); backdrop-filter:blur(8px);
+            background:var(--winner-bg); backdrop-filter:blur(8px);
             flex-direction:column; align-items:center; justify-content:center;
         }
         .winner-header {
-            font-family:'Orbitron',monospace; font-size:18px; color:#ffd166;
-            letter-spacing:6px; margin-bottom:6px; text-shadow:0 0 20px rgba(255,209,102,0.6);
+            font-family:'Orbitron',monospace; font-size:18px; color:var(--winner-head);
+            letter-spacing:6px; margin-bottom:6px; text-shadow:var(--winner-head-glow);
             animation:winnerPulse 1.5s ease-in-out infinite;
         }
         @keyframes winnerPulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
-        .winner-subhead { font-size:13px; color:#5ed4ff; letter-spacing:3px; margin-bottom:32px; }
+        .winner-subhead { font-size:13px; color:var(--winner-sub-color); letter-spacing:3px; margin-bottom:32px; }
         .winner-list { display:flex; flex-direction:column; gap:16px; margin-bottom:28px; }
         .winner-row {
             display:flex; align-items:center; gap:20px;
-            background:linear-gradient(90deg,rgba(255,209,102,0.12),rgba(0,212,255,0.08));
-            border:1.5px solid rgba(255,209,102,0.5); border-radius:14px;
+            background:var(--winner-row-bg);
+            border:1.5px solid var(--winner-row-border); border-radius:14px;
             padding:18px 48px; animation:winnerIn 0.6s ease both;
         }
         @keyframes winnerIn { from{opacity:0; transform:scale(0.8)} to{opacity:1; transform:none} }
         .winner-rank {
-            font-family:'Orbitron',monospace; font-size:20px; color:#ffd166; font-weight:900;
-            width:40px; height:40px; border:2px solid rgba(255,209,102,0.6);
+            font-family:'Orbitron',monospace; font-size:20px; color:var(--winner-head); font-weight:900;
+            width:40px; height:40px; border:2px solid var(--winner-row-border);
             border-radius:50%; display:flex; align-items:center; justify-content:center;
         }
-        .winner-name { font-size:42px; font-weight:700; color:#fff; text-shadow:0 0 24px rgba(0,212,255,0.5); }
-        #winner-sub { font-size:15px; color:#7fb3c8; letter-spacing:1px; }
+        .winner-name { font-size:42px; font-weight:700; color:var(--winner-name); text-shadow:var(--winner-name-glow); }
+        #winner-sub { font-size:15px; color:var(--winner-note); letter-spacing:1px; }
 
         @keyframes scan { 0%{transform:translateY(-100%); opacity:0.4} 100%{transform:translateY(100vh); opacity:0} }
         .scan-line {
             position:fixed; left:0; right:0; height:2px;
-            background:linear-gradient(90deg,transparent,rgba(0,212,255,0.3),transparent);
+            background:linear-gradient(90deg,transparent,var(--scan),transparent);
             animation:scan 4s linear infinite; pointer-events:none; z-index:1;
         }
     </style>
@@ -741,7 +914,7 @@
                 </div>
                 <div class="stat-box" style="margin-top:10px">
                     <div class="stat-label">이벤트 완료</div>
-                    <div class="stat-value" id="total-events" style="font-size:26px">0</div>
+                    <div class="stat-value" id="total-events" style="font-size:calc(26px * var(--fs-number,1))">0</div>
                     <div class="stat-unit">건</div>
                 </div>
             </div>
