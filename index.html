@@ -9,7 +9,7 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
-        import { getFirestore, collection, addDoc, doc, updateDoc, query, where, getDocs } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, doc, updateDoc, arrayUnion, query, where, getDocs } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyDRS1hoA3dGERshLikDkspfNp5GT10iyF0",
@@ -259,6 +259,7 @@
                 currentNickname = nickname;
                 myStamps = [];
                 myEvents = {};
+                saveLoginInfo();
                 enterMainScreen();
 
             } catch (e) {
@@ -303,6 +304,7 @@
                 currentNickname = existing.nickname;
                 myStamps = existing.stamps || [];
                 myEvents = existing.events || {};
+                saveLoginInfo();
                 enterMainScreen();
 
             } catch (e) {
@@ -338,9 +340,9 @@
             const count = myStamps.length;
             updateUserHeader();
 
-            // 동메달 버튼 (3개)
+            // 동메달 버튼
             const btn3 = document.getElementById('btn-tier-3');
-            if (count >= 3) {
+            if (count >= medalTiers.bronze) {
                 btn3.disabled = false;
                 if (myEvents['EVENT-BRONZE']) {
                     // 이벤트 완료 표시
@@ -353,9 +355,9 @@
                 }
             }
 
-            // 은메달 버튼 (6개)
+            // 은메달 버튼
             const btn6 = document.getElementById('btn-tier-6');
-            if (count >= 6) {
+            if (count >= medalTiers.silver) {
                 btn6.disabled = false;
                 if (myEvents['EVENT-SILVER']) {
                     btn6.className = "w-full bg-gray-100 text-gray-400 font-bold py-3 rounded-lg mt-2 cursor-not-allowed";
@@ -367,9 +369,9 @@
                 }
             }
 
-            // 금메달 버튼 (9개)
+            // 금메달 버튼
             const btn9 = document.getElementById('btn-tier-9');
-            if (count >= 9) {
+            if (count >= medalTiers.gold) {
                 btn9.disabled = false;
                 if (myEvents['EVENT-GOLD']) {
                     btn9.className = "w-full bg-gray-100 text-gray-400 font-bold py-3 rounded-lg mt-2 cursor-not-allowed";
@@ -380,6 +382,19 @@
                     btn9.innerHTML = '🥇 금메달 이벤트 부스 참여하기';
                 }
             }
+        }
+
+        // 잠금 버튼 문구에 실제 메달 기준 표시
+        function updateLockedButtonText() {
+            const btn3 = document.getElementById('btn-tier-3');
+            const btn6 = document.getElementById('btn-tier-6');
+            const btn9 = document.getElementById('btn-tier-9');
+            if (btn3 && btn3.disabled && !myEvents['EVENT-BRONZE'])
+                btn3.innerHTML = `🔒 동메달 부스 (스탬프 ${medalTiers.bronze}개 필요)`;
+            if (btn6 && btn6.disabled && !myEvents['EVENT-SILVER'])
+                btn6.innerHTML = `🔒 은메달 부스 (스탬프 ${medalTiers.silver}개 필요)`;
+            if (btn9 && btn9.disabled && !myEvents['EVENT-GOLD'])
+                btn9.innerHTML = `🔒 금메달 부스 (스탬프 ${medalTiers.gold}개 필요)`;
         }
 
         // ─────────────────────────────────────
@@ -555,19 +570,26 @@
                     return;
                 }
 
-                // 이벤트 완료 처리
-                myEvents[decodedText] = true;
+                // 이벤트 완료 처리 (서버 저장 성공 시에만 반영)
                 await stopScanner();
 
                 try {
-                    await updateDoc(doc(db, 'users', currentUserId), { events: myEvents });
+                    await updateDoc(doc(db, 'users', currentUserId), {
+                        ['events.' + decodedText]: true   // 해당 이벤트만 안전하게 갱신
+                    });
                     await addDoc(collection(db, 'eventLogs'), {
                         user_id: currentUserId,
                         event_code: decodedText,
                         event_name: boothInfo.name,
                         completed_at: new Date()
                     });
-                } catch(e) { console.error('이벤트 저장 실패:', e); }
+                    myEvents[decodedText] = true;
+                } catch(e) {
+                    console.error('이벤트 저장 실패:', e);
+                    alert('⚠️ 네트워크 문제로 저장에 실패했습니다.\n이벤트 QR을 다시 스캔해주세요.');
+                    showScreen('screen-main');
+                    return;
+                }
 
                 updateUI();
                 showScreen('screen-main');
@@ -596,20 +618,25 @@
             document.getElementById('btn-start-scan').style.display = 'flex';
             document.getElementById('btn-start-scan').innerText = '📷 다음 QR 스캔하기';
 
-            myStamps.push(decodedText);
-            updateUI();
-            renderStampList();
-            alert(`🎉 ${boothInfo.name} 스탬프 적립!`);
-
+            // 먼저 서버 저장 → 성공 시에만 화면 반영 (데이터 유실 방지)
             try {
+                await updateDoc(doc(db, 'users', currentUserId), {
+                    stamps: arrayUnion(decodedText)   // 덮어쓰기 대신 안전한 추가
+                });
                 await addDoc(collection(db, 'stampLogs'), {
                     user_id: currentUserId,
                     booth_code: decodedText,
                     booth_name: boothInfo.name,
                     scanned_at: new Date()
                 });
-                await updateDoc(doc(db, 'users', currentUserId), { stamps: myStamps });
-            } catch(e) { console.error('DB 저장 실패:', e); }
+                myStamps.push(decodedText);
+                updateUI();
+                renderStampList();
+                alert(`🎉 ${boothInfo.name} 스탬프 적립!`);
+            } catch(e) {
+                console.error('DB 저장 실패:', e);
+                alert('⚠️ 네트워크 문제로 스탬프 저장에 실패했습니다.\n같은 QR을 다시 스캔해주세요.');
+            }
         }
 
         // ─────────────────────────────────────
@@ -731,6 +758,7 @@
         // 앱 초기화
         // ─────────────────────────────────────
         let boothMapUrl = '';
+        let medalTiers = { bronze: 3, silver: 6, gold: 9 };  // 메달 기준 (admin에서 설정 가능)
 
         async function loadIntro() {
             try {
@@ -760,6 +788,16 @@
                     boothMapUrl = event.mapImage;
                     document.getElementById('btn-map').style.display = 'flex';
                 }
+                // 메달 기준 (동/은/금 필요 스탬프 수)
+                if (event && event.tiers) {
+                    medalTiers = {
+                        bronze: event.tiers.bronze || 3,
+                        silver: event.tiers.silver || 6,
+                        gold: event.tiers.gold || 9
+                    };
+                }
+                // 잠금 버튼 문구에 기준 반영
+                updateLockedButtonText();
             } catch(e) { console.error('설정 로드 실패:', e); }
         }
 
@@ -777,11 +815,61 @@
             showScreen('screen-pre-survey');
         }
 
+        // ─────────────────────────────────────
+        // 자동 로그인 (localStorage)
+        // ─────────────────────────────────────
+        function saveLoginInfo() {
+            try {
+                localStorage.setItem('stampTourUser', JSON.stringify({
+                    id: currentUserId, nickname: currentNickname
+                }));
+            } catch(e) { /* 시크릿 모드 등에서 실패해도 무시 */ }
+        }
+
+        async function tryAutoLogin() {
+            try {
+                const saved = localStorage.getItem('stampTourUser');
+                if (!saved) return false;
+                const info = JSON.parse(saved);
+                if (!info.id) return false;
+
+                // Firebase에서 최신 데이터 로드
+                const snap = await getDocs(query(collection(db, 'users'), where('nickname', '==', info.nickname)));
+                if (snap.empty) {
+                    localStorage.removeItem('stampTourUser');  // 삭제된 계정
+                    return false;
+                }
+                const docSnap = snap.docs[0];
+                const data = docSnap.data();
+                currentUserId = docSnap.id;
+                currentNickname = data.nickname;
+                myStamps = data.stamps || [];
+                myEvents = data.events || {};
+                return true;
+            } catch(e) {
+                console.error('자동 로그인 실패:', e);
+                return false;
+            }
+        }
+
+        window.logout = function() {
+            if (!confirm('로그아웃 하시겠습니까?\n다시 접속하려면 닉네임과 비밀번호가 필요합니다.')) return;
+            localStorage.removeItem('stampTourUser');
+            location.reload();
+        }
+
         async function init() {
             await loadBooths();
             await loadSurveys();
             await loadIntro();
-            showScreen('screen-intro');
+
+            // 자동 로그인 시도 → 성공하면 바로 메인 화면
+            const loggedIn = await tryAutoLogin();
+            if (loggedIn) {
+                enterMainScreen();
+            } else {
+                showScreen('screen-intro');
+            }
         }
         init();
 
@@ -941,7 +1029,10 @@
         <!-- 내 닉네임 헤더 -->
         <div class="bg-gradient-to-r from-indigo-600 to-indigo-500 rounded-xl p-4 flex items-center justify-between mb-4">
             <div>
-                <div class="text-white/70 text-xs mb-0.5">내 닉네임</div>
+                <div class="text-white/70 text-xs mb-0.5 flex items-center gap-2">
+                    내 닉네임
+                    <button onclick="logout()" class="text-white/50 hover:text-white/90 underline text-[10px]">로그아웃</button>
+                </div>
                 <div class="text-white text-lg font-bold" id="header-nickname">-</div>
             </div>
             <div class="bg-white/15 rounded-lg px-4 py-2 text-center">

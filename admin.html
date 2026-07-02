@@ -610,6 +610,111 @@
                 }).join('');
         }
 
+        // ─────────────────────────────────────
+        // CSV 내보내기 (엑셀 호환)
+        // ─────────────────────────────────────
+        function downloadCSV(rows, filename) {
+            // 셀 이스케이프 + BOM(한글 엑셀 호환)
+            const csv = '\uFEFF' + rows.map(r =>
+                r.map(cell => {
+                    const s = String(cell ?? '');
+                    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+                }).join(',')
+            ).join('\n');
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(a.href);
+        }
+
+        function formatDate(ts) {
+            if (!ts) return '';
+            const d = ts.seconds ? new Date(ts.seconds * 1000) : new Date(ts);
+            const p = n => String(n).padStart(2, '0');
+            return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+        }
+
+        // 참여자 목록 CSV
+        window.exportUsersCSV = async function() {
+            const snap = await getDocs(collection(db, 'users'));
+            const rows = [['닉네임','참여대상','참여목적','스탬프 수','스캔한 부스','동메달','은메달','금메달','가입 시각']];
+            const users = [];
+            snap.forEach(d => users.push(d.data()));
+            users.sort((a,b) => (a.created_at?.seconds||0) - (b.created_at?.seconds||0));
+            users.forEach(u => {
+                const ev = u.events || {};
+                rows.push([
+                    u.nickname || '',
+                    u.target || '',
+                    (u.purposes || []).join(' / '),
+                    (u.stamps || []).length,
+                    (u.stamps || []).join(' / '),
+                    ev['EVENT-BRONZE'] ? 'O' : '',
+                    ev['EVENT-SILVER'] ? 'O' : '',
+                    ev['EVENT-GOLD'] ? 'O' : '',
+                    formatDate(u.created_at)
+                ]);
+            });
+            downloadCSV(rows, '참여자목록.csv');
+        }
+
+        // 설문 응답 CSV (사전+사후)
+        window.exportSurveysCSV = async function() {
+            // 문항 텍스트 로드
+            const sq = await getDocs(collection(db, 'surveys'));
+            const qTexts = {};
+            sq.forEach(d => {
+                const data = d.data();
+                qTexts[data.type] = (data.questions || []).map(q => q.text);
+            });
+
+            // 사용자 닉네임 매핑 + 사전 응답
+            const uSnap = await getDocs(collection(db, 'users'));
+            const nickById = {};
+            const preRows = [['닉네임','참여대상','참여목적','사전설문 응답','가입 시각']];
+            const preUsers = [];
+            uSnap.forEach(d => { nickById[d.id] = d.data().nickname || ''; preUsers.push(d.data()); });
+            preUsers.sort((a,b) => (a.created_at?.seconds||0) - (b.created_at?.seconds||0));
+            preUsers.forEach(u => {
+                const ans = u.pre_answers || {};
+                const preTexts = qTexts['pre'] || [];
+                const answerStr = Object.entries(ans).map(([k, v]) => {
+                    const q = preTexts[parseInt(k)] || `문항${parseInt(k)+1}`;
+                    return `[${q}] ${Array.isArray(v) ? v.join('·') : v}`;
+                }).join(' / ');
+                preRows.push([u.nickname||'', u.target||'', (u.purposes||[]).join('·'), answerStr, formatDate(u.created_at)]);
+            });
+
+            // 사후 응답
+            const pSnap = await getDocs(collection(db, 'postSurveys'));
+            const postRows = [['닉네임','메달','문항','응답','만족도(기본)','의견','제출 시각']];
+            const tierName = { 3:'동메달', 6:'은메달', 9:'금메달' };
+            const tierKey  = { 3:'post-bronze', 6:'post-silver', 9:'post-gold' };
+            const posts = [];
+            pSnap.forEach(d => posts.push(d.data()));
+            posts.sort((a,b) => (a.submitted_at?.seconds||0) - (b.submitted_at?.seconds||0));
+            posts.forEach(p => {
+                const texts = qTexts[tierKey[p.tier]] || [];
+                const da = p.dynamic_answers || {};
+                if (Object.keys(da).length === 0) {
+                    postRows.push([nickById[p.user_id]||'', tierName[p.tier]||p.tier, '', '', p.satisfaction||'', p.comment||'', formatDate(p.submitted_at)]);
+                } else {
+                    Object.entries(da).forEach(([k, v]) => {
+                        const idx = parseInt(String(k).replace(/\D/g, ''));
+                        const q = texts[idx] || `문항${idx+1}`;
+                        postRows.push([nickById[p.user_id]||'', tierName[p.tier]||p.tier, q, v, p.satisfaction||'', p.comment||'', formatDate(p.submitted_at)]);
+                    });
+                }
+            });
+
+            downloadCSV(preRows, '사전설문.csv');
+            setTimeout(() => downloadCSV(postRows, '사후설문.csv'), 400);
+        }
+
         window.refreshStats = async function() {
             const btn = document.getElementById('btn-refresh');
             btn.innerText = '새로고침 중...';
@@ -704,13 +809,23 @@
                 }
             } catch(e) { console.error('인트로 설정 로드 실패:', e); }
 
-            // 행사 설정 (행사명 + 배치도)
+            // 행사 설정 (행사명 + 배치도 + 메달 기준)
             try {
                 const evtSnap = await getDoc(doc(db, 'settings', 'event'));
                 if (evtSnap.exists()) {
                     const data = evtSnap.data();
                     document.getElementById('event-name-input').value = data.eventName || '';
                     document.getElementById('event-map-input').value = data.mapImage || '';
+                    if (data.tiers) {
+                        document.getElementById('tier-bronze-input').value = data.tiers.bronze || 3;
+                        document.getElementById('tier-silver-input').value = data.tiers.silver || 6;
+                        document.getElementById('tier-gold-input').value = data.tiers.gold || 9;
+                        adminTiers = {
+                            bronze: data.tiers.bronze || 3,
+                            silver: data.tiers.silver || 6,
+                            gold: data.tiers.gold || 9
+                        };
+                    }
                 }
             } catch(e) { console.error('행사 설정 로드 실패:', e); }
         }
@@ -718,9 +833,16 @@
         window.saveEventSettings = async function() {
             const eventName = document.getElementById('event-name-input').value.trim();
             const mapImage = document.getElementById('event-map-input').value.trim();
+            const tb = parseInt(document.getElementById('tier-bronze-input').value) || 3;
+            const ts = parseInt(document.getElementById('tier-silver-input').value) || 6;
+            const tg = parseInt(document.getElementById('tier-gold-input').value) || 9;
 
             if (mapImage && !mapImage.startsWith('http')) {
                 alert('배치도 링크는 http로 시작하는 직접 링크여야 합니다.');
+                return;
+            }
+            if (!(tb < ts && ts < tg)) {
+                alert('메달 기준은 동 < 은 < 금 순서여야 합니다.\n예) 동 3, 은 6, 금 9');
                 return;
             }
 
@@ -730,6 +852,7 @@
                 await setDoc(doc(db, 'settings', 'event'), {
                     eventName: eventName,
                     mapImage: mapImage,
+                    tiers: { bronze: tb, silver: ts, gold: tg },
                     updated_at: new Date()
                 });
                 alert('✅ 행사 설정이 저장되었습니다!\n참가자 화면과 전광판에 반영됩니다.');
@@ -833,6 +956,7 @@
         // 🎲 랜덤 추첨
         // ─────────────────────────────────────
         let drawTarget = 'all';
+        let adminTiers = { bronze: 3, silver: 6, gold: 9 };  // 추첨 조건용 메달 기준
 
         window.selectDrawTarget = function(el) {
             document.querySelectorAll('.draw-target-btn').forEach(b => {
@@ -879,12 +1003,12 @@
                 if (!data.nickname) return;
                 const cnt = (data.stamps || []).length;
 
-                // 메달 조건
+                // 메달 조건 (설정된 기준 사용)
                 let ok = false;
                 if (drawTarget === 'all') ok = true;
-                else if (drawTarget === 'bronze' && cnt >= 3) ok = true;
-                else if (drawTarget === 'silver' && cnt >= 6) ok = true;
-                else if (drawTarget === 'gold' && cnt >= 9) ok = true;
+                else if (drawTarget === 'bronze' && cnt >= adminTiers.bronze) ok = true;
+                else if (drawTarget === 'silver' && cnt >= adminTiers.silver) ok = true;
+                else if (drawTarget === 'gold' && cnt >= adminTiers.gold) ok = true;
 
                 // 최근 활동 조건 (교집합)
                 if (ok && recentUserIds !== null) {
@@ -970,6 +1094,7 @@
                 `).join('');
 
                 alert('🎉 추첨 완료!\n전광판에 당첨자가 표시되었습니다.');
+                await loadDrawHistory();
             } catch(e) {
                 alert('추첨 중 오류: ' + e.message);
             }
@@ -990,6 +1115,62 @@
                 alert('오류: ' + e.message);
             }
         }
+
+        // ─────────────────────────────────────
+        // 추첨 기록 & 상품 지급 확인
+        // ─────────────────────────────────────
+        async function loadDrawHistory() {
+            const container = document.getElementById('draw-history');
+            if (!container) return;
+            try {
+                const snap = await getDocs(collection(db, 'draws'));
+                const draws = [];
+                snap.forEach(d => draws.push({ id: d.id, ...d.data() }));
+                draws.sort((a,b) => (b.drawn_at?.seconds||0) - (a.drawn_at?.seconds||0));
+
+                if (draws.length === 0) {
+                    container.innerHTML = '<p class="text-gray-400 text-sm text-center py-2">추첨 기록이 없습니다.</p>';
+                    return;
+                }
+
+                container.innerHTML = draws.map(dr => {
+                    const claimed = dr.claimed || {};
+                    const time = dr.drawn_at?.seconds
+                        ? new Date(dr.drawn_at.seconds*1000).toLocaleString('ko-KR', {month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})
+                        : '';
+                    return `<div class="border border-gray-200 rounded-xl p-3">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-xs font-bold text-gray-600">${dr.label || '추첨'}</span>
+                            <span class="text-xs text-gray-400">${time}${dr.active ? ' · <span class="text-green-500 font-bold">전광판 표시중</span>' : ''}</span>
+                        </div>
+                        <div class="flex flex-col gap-1.5">
+                            ${(dr.winners||[]).map(w => `
+                                <label class="flex items-center gap-2 text-sm cursor-pointer ${claimed[w] ? 'opacity-60' : ''}">
+                                    <input type="checkbox" ${claimed[w] ? 'checked' : ''}
+                                        onchange="toggleClaim('${dr.id}', '${w.replace(/'/g, "\\'")}', this.checked)"
+                                        class="w-4 h-4">
+                                    <span class="${claimed[w] ? 'line-through text-gray-400' : 'text-gray-800 font-medium'}">${w}</span>
+                                    ${claimed[w] ? '<span class="text-xs text-green-500">✅ 지급완료</span>' : '<span class="text-xs text-amber-500">미지급</span>'}
+                                </label>
+                            `).join('')}
+                        </div>
+                    </div>`;
+                }).join('');
+            } catch(e) { console.error('추첨 기록 로드 실패:', e); }
+        }
+
+        window.toggleClaim = async function(drawId, winner, checked) {
+            try {
+                await updateDoc(doc(db, 'draws', drawId), {
+                    ['claimed.' + winner]: checked
+                });
+                await loadDrawHistory();
+            } catch(e) {
+                alert('저장 실패: ' + e.message);
+                await loadDrawHistory();
+            }
+        }
+        window.loadDrawHistory = loadDrawHistory;
 
         // window에 노출
         window.loadBooths = loadBooths;
@@ -1109,6 +1290,26 @@
                 <input id="event-name-input" type="text" placeholder="예) 스탬프 Tour, 에듀테크 박람회"
                     class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-1 focus:outline-none focus:ring-2 focus:ring-indigo-400">
                 <p class="text-xs text-gray-400 mb-3">💡 비워두면 기본값 "스탬프 Tour"가 표시됩니다.</p>
+
+                <label class="block text-sm font-bold text-gray-700 mb-1">메달 달성 기준 (필요 스탬프 수)</label>
+                <div class="grid grid-cols-3 gap-2 mb-1">
+                    <div>
+                        <div class="text-xs text-gray-500 mb-1 text-center">🥉 동메달</div>
+                        <input id="tier-bronze-input" type="number" value="3" min="1" max="99"
+                            class="w-full border border-gray-300 rounded-lg px-2 py-2 text-center text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                    </div>
+                    <div>
+                        <div class="text-xs text-gray-500 mb-1 text-center">🥈 은메달</div>
+                        <input id="tier-silver-input" type="number" value="6" min="2" max="99"
+                            class="w-full border border-gray-300 rounded-lg px-2 py-2 text-center text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                    </div>
+                    <div>
+                        <div class="text-xs text-gray-500 mb-1 text-center">🥇 금메달</div>
+                        <input id="tier-gold-input" type="number" value="9" min="3" max="99"
+                            class="w-full border border-gray-300 rounded-lg px-2 py-2 text-center text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                    </div>
+                </div>
+                <p class="text-xs text-gray-400 mb-3">💡 부스가 40개라면 예: 동 5 / 은 10 / 금 20 처럼 조절하세요. 참가자 화면과 추첨 조건에 자동 반영됩니다.</p>
 
                 <label class="block text-sm font-bold text-gray-700 mb-1">부스 배치도 이미지 링크 <span class="text-xs font-normal text-gray-400">(선택)</span></label>
                 <input id="event-map-input" type="text" placeholder="배치도 이미지 직접 링크(.jpg/.png)"
@@ -1256,14 +1457,29 @@
                 <div id="draw-result-list" class="flex flex-col gap-2"></div>
             </div>
 
-            <p class="text-xs text-gray-400 text-center">💡 추첨 시작 시 전광판에 결과가 자동으로 뜹니다. "전광판에서 내리기"를 누르면 다시 일반 화면으로 돌아갑니다.</p>
+            <p class="text-xs text-gray-400 text-center mb-4">💡 추첨 시작 시 전광판에 결과가 자동으로 뜹니다. "전광판에서 내리기"를 누르면 다시 일반 화면으로 돌아갑니다.</p>
+
+            <!-- 추첨 기록 & 상품 지급 확인 -->
+            <div class="bg-white rounded-2xl shadow p-5">
+                <h2 class="font-bold text-gray-700 mb-1">📜 추첨 기록 & 상품 지급 확인</h2>
+                <p class="text-xs text-gray-400 mb-4">당첨자가 상품을 받아가면 체크하세요. 중복 수령을 막을 수 있습니다.</p>
+                <div id="draw-history" class="flex flex-col gap-3">
+                    <p class="text-gray-400 text-sm text-center py-2">추첨 기록이 없습니다.</p>
+                </div>
+            </div>
         </div>
 
         <!-- ══ 탭③: 현황판 ══ -->
         <div id="tab-stats" class="tab-content">
 
-            <!-- 새로고침 -->
-            <div class="flex justify-end mb-3">
+            <!-- 새로고침 + CSV 내보내기 -->
+            <div class="flex justify-between items-center mb-3">
+                <div class="flex gap-2">
+                    <button onclick="exportUsersCSV()"
+                        class="text-xs bg-green-500 hover:bg-green-600 text-white font-bold px-3 py-1.5 rounded-lg">📥 참여자 CSV</button>
+                    <button onclick="exportSurveysCSV()"
+                        class="text-xs bg-green-500 hover:bg-green-600 text-white font-bold px-3 py-1.5 rounded-lg">📥 설문 CSV</button>
+                </div>
                 <button id="btn-refresh" onclick="refreshStats()"
                     class="text-sm text-indigo-500 hover:text-indigo-700 font-medium">🔄 새로고침</button>
             </div>
@@ -1393,7 +1609,10 @@
             });
             document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
             document.getElementById('tab-' + tab).classList.add('active');
-            if (tab === 'draw' && window.updateDrawPool) window.updateDrawPool();
+            if (tab === 'draw') {
+                if (window.updateDrawPool) window.updateDrawPool();
+                if (window.loadDrawHistory) window.loadDrawHistory();
+            }
         }
     </script>
 </body>

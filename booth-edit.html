@@ -25,12 +25,20 @@
         let currentBoothId = null;
         let currentImages = [];
 
+        // 강사 공통 비밀번호 (운영 담당자가 강사들에게만 공유)
+        const INSTRUCTOR_PASSWORD = 'ahnbagsa0725';
+
         // ─────────────────────────────────────
         // 부스 번호로 조회
         // ─────────────────────────────────────
         window.lookupBooth = async function() {
             const codeInput = document.getElementById('input-code').value.trim().toUpperCase();
+            const instructorPw = document.getElementById('input-instructor-pw').value.trim();
             if (!codeInput) { alert('부스 번호를 입력해주세요.'); return; }
+            if (instructorPw !== INSTRUCTOR_PASSWORD) {
+                alert('🔒 강사 비밀번호가 일치하지 않습니다.\n운영 담당 선생님께 문의하세요.');
+                return;
+            }
 
             // BOOTH-07 또는 7 또는 07 입력 모두 허용
             let code = codeInput;
@@ -169,13 +177,17 @@
         <!-- 부스 번호 입력 -->
         <div class="bg-indigo-50 rounded-xl p-4 mb-4">
             <p class="text-sm font-bold text-indigo-700 mb-2">먼저 본인 부스 번호를 입력하세요</p>
-            <div class="flex gap-2">
-                <input id="input-code" type="text" placeholder="예) 7 또는 BOOTH-07"
-                    class="flex-1 border border-indigo-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
-                <button id="btn-lookup" onclick="lookupBooth()"
-                    class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-5 py-2 rounded-lg text-sm whitespace-nowrap">
-                    조회
-                </button>
+            <div class="flex flex-col gap-2">
+                <input id="input-code" type="text" placeholder="부스 번호 (예: 7 또는 BOOTH-07)"
+                    class="w-full border border-indigo-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                <div class="flex gap-2">
+                    <input id="input-instructor-pw" type="password" placeholder="강사 비밀번호"
+                        class="flex-1 border border-indigo-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                    <button id="btn-lookup" onclick="lookupBooth()"
+                        class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-5 py-2 rounded-lg text-sm whitespace-nowrap">
+                        조회
+                    </button>
+                </div>
             </div>
             <p class="text-xs text-indigo-400 mt-2">💡 부스 번호는 운영 담당 선생님께 문의하세요.</p>
         </div>

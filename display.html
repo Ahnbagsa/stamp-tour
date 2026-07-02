@@ -30,17 +30,30 @@
             snap.forEach(d => { boothNames[d.data().code] = d.data().name; });
         }
 
-        // 행사명 로드 → 헤더 반영
+        // 행사 설정 로드 (행사명 + 메달 기준)
+        let displayTiers = { bronze: 3, silver: 6, gold: 9 };
         async function loadEventName() {
             try {
                 const snap = await getDocs(collection(db, 'settings'));
                 snap.forEach(d => {
-                    if (d.id === 'event' && d.data().eventName) {
-                        document.getElementById('event-title').textContent = d.data().eventName;
-                        document.title = d.data().eventName + ' - 실시간 현황';
+                    if (d.id !== 'event') return;
+                    const data = d.data();
+                    if (data.eventName) {
+                        document.getElementById('event-title').textContent = data.eventName;
+                        document.title = data.eventName + ' - 실시간 현황';
+                    }
+                    if (data.tiers) {
+                        displayTiers = {
+                            bronze: data.tiers.bronze || 3,
+                            silver: data.tiers.silver || 6,
+                            gold: data.tiers.gold || 9
+                        };
+                        document.getElementById('tier-bronze-label').textContent = `동메달 (${displayTiers.bronze}개 달성)`;
+                        document.getElementById('tier-silver-label').textContent = `은메달 (${displayTiers.silver}개 달성)`;
+                        document.getElementById('tier-gold-label').textContent = `금메달 (${displayTiers.gold}개 달성)`;
                     }
                 });
-            } catch(e) { console.error('행사명 로드 실패:', e); }
+            } catch(e) { console.error('행사 설정 로드 실패:', e); }
         }
         loadEventName();
 
@@ -67,9 +80,9 @@
             let s3=0, s6=0, s9=0;
             snap.forEach(d => {
                 const cnt = (d.data().stamps || []).length;
-                if (cnt >= 9) s9++;
-                else if (cnt >= 6) s6++;
-                else if (cnt >= 3) s3++;
+                if (cnt >= displayTiers.gold) s9++;
+                else if (cnt >= displayTiers.silver) s6++;
+                else if (cnt >= displayTiers.bronze) s3++;
             });
             document.getElementById('tier-bronze').textContent = s3;
             document.getElementById('tier-silver').textContent = s6;
@@ -768,17 +781,17 @@
                 <div class="tier-list">
                     <div class="tier-row">
                         <span class="tier-icon">🥉</span>
-                        <div class="tier-info"><div class="tier-name">동메달 (3개 달성)</div><div class="tier-val bronze" id="tier-bronze">0</div></div>
+                        <div class="tier-info"><div class="tier-name" id="tier-bronze-label">동메달 (3개 달성)</div><div class="tier-val bronze" id="tier-bronze">0</div></div>
                         <span class="tier-unit">명</span>
                     </div>
                     <div class="tier-row">
                         <span class="tier-icon">🥈</span>
-                        <div class="tier-info"><div class="tier-name">은메달 (6개 달성)</div><div class="tier-val silver" id="tier-silver">0</div></div>
+                        <div class="tier-info"><div class="tier-name" id="tier-silver-label">은메달 (6개 달성)</div><div class="tier-val silver" id="tier-silver">0</div></div>
                         <span class="tier-unit">명</span>
                     </div>
                     <div class="tier-row">
                         <span class="tier-icon">🥇</span>
-                        <div class="tier-info"><div class="tier-name">금메달 (9개 달성)</div><div class="tier-val gold" id="tier-gold">0</div></div>
+                        <div class="tier-info"><div class="tier-name" id="tier-gold-label">금메달 (9개 달성)</div><div class="tier-val gold" id="tier-gold">0</div></div>
                         <span class="tier-unit">명</span>
                     </div>
                 </div>
